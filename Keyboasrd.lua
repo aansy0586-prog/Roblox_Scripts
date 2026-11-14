@@ -1406,6 +1406,19 @@ keySpec("Esc", "Esc", "ESC", "Escape")
 keySpec("Backspace", "Backspace", "Back", "Backspace")
 keySpec("Emote", "Emote (قائمة الإيموت)", "Emote", "Period")
 keySpec("Slash", "/ (الشات)", "/", "Slash")
+
+-- أزرار واجهة شبيهة بيد PlayStation للجوال.
+-- هذه الأزرار ترسل مدخلات كيبورد/ماوس افتراضية، وليست GamepadInput حقيقية.
+keySpec("PSCross", "PS: X (افتراضيًا Space / قفز)", "✕", "Space", 58, 58)
+keySpec("PSCircle", "PS: O (افتراضيًا Ctrl)", "○", "LeftControl", 58, 58)
+keySpec("PSSquare", "PS: □ (افتراضيًا F)", "□", "F", 58, 58)
+keySpec("PSTriangle", "PS: △ (افتراضيًا E)", "△", "E", 58, 58)
+keySpec("PSL1", "PS: L1 (افتراضيًا Q)", "L1", "Q", 66, 44)
+keySpec("PSR1", "PS: R1 (افتراضيًا R)", "R1", "R", 66, 44)
+addSpec({ id = "PSL2", title = "PS: L2 (زر ماوس يمين)", label = "L2", group = GROUP_MOUSE, size = Vector2.new(66, 44),
+    build = function(s) return buildMouseButton(s.label, s.size, 1, true) end })
+addSpec({ id = "PSR2", title = "PS: R2 (زر ماوس يسار)", label = "R2", group = GROUP_MOUSE, size = Vector2.new(66, 44),
+    build = function(s) return buildMouseButton(s.label, s.size, 0) end })
 keySpec("Up", "سهم فوق", "↑", "Up")
 keySpec("Down", "سهم تحت", "↓", "Down")
 keySpec("Left", "سهم يسار", "←", "Left")
