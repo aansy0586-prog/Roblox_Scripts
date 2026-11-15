@@ -2831,3 +2831,302 @@ task.spawn(function()
 		saveState()
 	end
 end)
+
+
+-- ========== واجهة يد PlayStation كاملة للمس على الجوال ==========
+-- هذه طبقة لمس مستقلة؛ لا تحذف أو تستبدل الأزرار الأصلية أو إعداداتها.
+do
+	if UserInputService.TouchEnabled then
+		local ps = Instance.new("Frame")
+		ps.Name = "PlayStationTouchGamepad"
+		ps.Size = UDim2.fromScale(1, 1)
+		ps.BackgroundTransparency = 1
+		ps.Active = false
+		ps.ZIndex = 30
+		ps.Parent = gui
+
+		local function round(obj, radius)
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(1, 0)
+			c.Parent = obj
+			local st = Instance.new("UIStroke")
+			st.Color = Color3.fromRGB(205, 215, 230)
+			st.Transparency = 0.28
+			st.Thickness = 1.5
+			st.Parent = obj
+			return st
+		end
+
+		local function psButton(name, label, x, y, w, h, down, up, color)
+			local b = Instance.new("TextButton")
+			b.Name = name
+			b.AnchorPoint = Vector2.new(0.5, 0.5)
+			b.Position = UDim2.fromScale(x, y)
+			b.Size = UDim2.fromOffset(w, h)
+			b.BackgroundColor3 = color or Color3.fromRGB(27, 32, 43)
+			b.BackgroundTransparency = 0.12
+			b.Text = label
+			b.TextColor3 = Color3.fromRGB(245, 248, 255)
+			b.Font = Enum.Font.GothamBold
+			b.TextSize = math.clamp(math.floor(h * 0.42), 14, 25)
+			b.AutoButtonColor = false
+			b.Selectable = false
+			b.ZIndex = 31
+			b.Parent = ps
+			local stroke = round(b)
+			local heldInput
+			b.InputBegan:Connect(function(input)
+				if editMode or not isPress(input) or heldInput then return end
+				heldInput = input
+				b.BackgroundColor3 = Color3.fromRGB(0, 115, 190)
+				if down then pcall(down) end
+			end)
+			local function release(input)
+				if heldInput and (not input or input == heldInput) then
+					heldInput = nil
+					b.BackgroundColor3 = color or Color3.fromRGB(27, 32, 43)
+					if up then pcall(up) end
+				end
+			end
+			b.InputEnded:Connect(release)
+			UserInputService.TouchEnded:Connect(function(input) release(input) end)
+			return b
+		end
+
+		local function keyHold(keyName)
+			local key = Enum.KeyCode[keyName]
+			return function() VirtualInputManager:SendKeyEvent(true, key, false, game) end,
+				function() VirtualInputManager:SendKeyEvent(false, key, false, game) end
+		end
+
+		local function mouseHold(button)
+			return function()
+				local cam = Workspace.CurrentCamera
+				local p = cam and cam.ViewportSize / 2 or virtualCursor
+				p = mp(p)
+				passFlash()
+				if button == 1 then rightHeld = true end
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, button, true, game, 0)
+			end, function()
+				local cam = Workspace.CurrentCamera
+				local p = cam and cam.ViewportSize / 2 or virtualCursor
+				p = mp(p)
+				passFlash()
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, button, false, game, 0)
+				if button == 1 then rightHeld = false end
+			end
+		end
+
+		local function unstick()
+			releaseAll()
+			if aimOn then setAim(false) end
+			rightHeld = false
+			pendingDelta = Vector2.zero
+			local cam = Workspace.CurrentCamera
+			local p = mp(cam and cam.ViewportSize / 2 or virtualCursor)
+			for n = 0, 2 do
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, n, false, game, 0)
+			end
+			for _, k in ipairs({"W","A","S","D","Space","LeftShift","LeftControl","E","Q"}) do
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[k], false, game)
+			end
+		end
+
+		-- العصا اليسرى: حركة WASD
+		local leftBase = Instance.new("Frame")
+		leftBase.Name = "PS_LeftStick"
+		leftBase.AnchorPoint = Vector2.new(0.5, 0.5)
+		leftBase.Position = UDim2.fromScale(0.145, 0.755)
+		leftBase.Size = UDim2.fromOffset(142, 142)
+		leftBase.BackgroundColor3 = Color3.fromRGB(25, 31, 42)
+		leftBase.BackgroundTransparency = 0.22
+		leftBase.Active = true
+		leftBase.ZIndex = 31
+		leftBase.Parent = ps
+		round(leftBase)
+		local leftKnob = Instance.new("Frame")
+		leftKnob.Name = "Knob"
+		leftKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+		leftKnob.Position = UDim2.fromScale(0.5, 0.5)
+		leftKnob.Size = UDim2.fromOffset(58, 58)
+		leftKnob.BackgroundColor3 = Color3.fromRGB(195, 205, 220)
+		leftKnob.BackgroundTransparency = 0.12
+		leftKnob.ZIndex = 32
+		leftKnob.Parent = leftBase
+		round(leftKnob)
+
+		local leftTouch
+		local leftKeys = {W=false,A=false,S=false,D=false}
+		local function setLeftKey(k, on)
+			if leftKeys[k] == on then return end
+			leftKeys[k] = on
+			VirtualInputManager:SendKeyEvent(on, Enum.KeyCode[k], false, game)
+		end
+		local function updateLeft(input)
+			local size = leftBase.AbsoluteSize
+			local center = leftBase.AbsolutePosition + size / 2
+			local offset = Vector2.new(input.Position.X, input.Position.Y) - center
+			local travel = size.X * 0.34
+			local clamped = offset.Magnitude > travel and offset.Unit * travel or offset
+			leftKnob.Position = UDim2.new(0.5, clamped.X, 0.5, clamped.Y)
+			local nx, ny = clamped.X / travel, clamped.Y / travel
+			setLeftKey("W", ny < -0.28)
+			setLeftKey("S", ny > 0.28)
+			setLeftKey("A", nx < -0.28)
+			setLeftKey("D", nx > 0.28)
+		end
+		local function releaseLeft()
+			for k in pairs(leftKeys) do setLeftKey(k, false) end
+			leftKnob.Position = UDim2.fromScale(0.5, 0.5)
+			leftTouch = nil
+		end
+		leftBase.InputBegan:Connect(function(input)
+			if editMode or not isPress(input) or leftTouch then return end
+			leftTouch = input
+			updateLeft(input)
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if leftTouch and input == leftTouch then updateLeft(input) end
+		end)
+		UserInputService.InputEnded:Connect(function(input)
+			if leftTouch and input == leftTouch then releaseLeft() end
+		end)
+		UserInputService.TouchEnded:Connect(function(input)
+			if leftTouch and input == leftTouch then releaseLeft() end
+		end)
+
+		-- العصا اليمنى: تحريك الكاميرا بالسحب
+		local rightBase = Instance.new("Frame")
+		rightBase.Name = "PS_RightStick"
+		rightBase.AnchorPoint = Vector2.new(0.5, 0.5)
+		rightBase.Position = UDim2.fromScale(0.855, 0.755)
+		rightBase.Size = UDim2.fromOffset(142, 142)
+		rightBase.BackgroundColor3 = Color3.fromRGB(25, 31, 42)
+		rightBase.BackgroundTransparency = 0.22
+		rightBase.Active = true
+		rightBase.ZIndex = 31
+		rightBase.Parent = ps
+		round(rightBase)
+		local rightKnob = Instance.new("Frame")
+		rightKnob.Name = "Knob"
+		rightKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+		rightKnob.Position = UDim2.fromScale(0.5, 0.5)
+		rightKnob.Size = UDim2.fromOffset(58, 58)
+		rightKnob.BackgroundColor3 = Color3.fromRGB(195, 205, 220)
+		rightKnob.BackgroundTransparency = 0.12
+		rightKnob.ZIndex = 32
+		rightKnob.Parent = rightBase
+		round(rightKnob)
+		local rightTouch, rightLast
+		local function updateRight(input)
+			local pos = Vector2.new(input.Position.X, input.Position.Y)
+			if rightLast then
+				local delta = pos - rightLast
+				pendingDelta += delta * CONFIG.CAMERA_SPEED * camSens()
+			end
+			rightLast = pos
+			local size = rightBase.AbsoluteSize
+			local center = rightBase.AbsolutePosition + size / 2
+			local off = pos - center
+			local travel = size.X * 0.34
+			local clamped = off.Magnitude > travel and off.Unit * travel or off
+			rightKnob.Position = UDim2.new(0.5, clamped.X, 0.5, clamped.Y)
+		end
+		local function releaseRight()
+			rightTouch, rightLast = nil, nil
+			rightKnob.Position = UDim2.fromScale(0.5, 0.5)
+		end
+		rightBase.InputBegan:Connect(function(input)
+			if editMode or not isPress(input) or rightTouch then return end
+			rightTouch = input
+			updateRight(input)
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if rightTouch and input == rightTouch then updateRight(input) end
+		end)
+		UserInputService.InputEnded:Connect(function(input)
+			if rightTouch and input == rightTouch then releaseRight() end
+		end)
+		UserInputService.TouchEnded:Connect(function(input)
+			if rightTouch and input == rightTouch then releaseRight() end
+		end)
+
+		-- أزرار الوجه الأربعة
+		local crossDown, crossUp = keyHold("Space")
+		local circleDown, circleUp = keyHold("LeftControl")
+		local squareDown, squareUp = keyHold("E")
+		local triangleDown, triangleUp = keyHold("Q")
+		psButton("Cross", "✕", 0.925, 0.665, 48, 48, crossDown, crossUp, Color3.fromRGB(32, 78, 130))
+		psButton("Circle", "○", 0.965, 0.585, 48, 48, circleDown, circleUp, Color3.fromRGB(125, 45, 55))
+		psButton("Square", "□", 0.885, 0.585, 48, 48, squareDown, squareUp, Color3.fromRGB(105, 65, 135))
+		psButton("Triangle", "△", 0.925, 0.505, 48, 48, triangleDown, triangleUp, Color3.fromRGB(45, 115, 85))
+
+		-- أزرار الكتف L/R
+		local l1d, l1u = keyHold("LeftShift")
+		local l2d = function() setAim(true) end
+		local l2u = function() setAim(false) end
+		local r1d, r1u = mouseHold(1)
+		local r2d, r2u = mouseHold(0)
+		psButton("L1", "L1", 0.075, 0.525, 66, 38, function() setShiftLock(not lockOn) end, nil)
+		psButton("L2", "L2", 0.075, 0.585, 66, 38, l2d, l2u)
+		psButton("R1", "R1", 0.925, 0.405, 66, 38, r1d, r1u)
+		psButton("R2", "R2", 0.925, 0.465, 66, 38, r2d, r2u)
+
+		-- L3 / R3، الأسهم، Share / Options، ولوحة اللمس
+		local l3d, l3u = keyHold("LeftShift")
+		psButton("L3", "L3", 0.145, 0.865, 48, 34, l3d, l3u)
+		psButton("R3", "R3", 0.855, 0.865, 48, 34, unstick, nil)
+		local upD, upU = keyHold("Up")
+		local downD, downU = keyHold("Down")
+		local leftD, leftU = keyHold("Left")
+		local rightD, rightU = keyHold("Right")
+		psButton("DPadUp", "▲", 0.285, 0.665, 42, 42, upD, upU)
+		psButton("DPadDown", "▼", 0.285, 0.765, 42, 42, downD, downU)
+		psButton("DPadLeft", "◀", 0.235, 0.715, 42, 42, leftD, leftU)
+		psButton("DPadRight", "▶", 0.335, 0.715, 42, 42, rightD, rightU)
+
+		psButton("Share", "SHARE", 0.435, 0.565, 68, 30,
+			function() panel.Visible = not panel.Visible end, nil)
+		psButton("Options", "OPTIONS", 0.565, 0.565, 76, 30,
+			function() panel.Visible = not panel.Visible end, nil)
+		psButton("Touchpad", "TOUCH PAD", 0.5, 0.465, 116, 34,
+			function()
+				local cam = Workspace.CurrentCamera
+				local p = mp(cam and cam.ViewportSize / 2 or virtualCursor)
+				passFlash()
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, 0, true, game, 0)
+			end,
+			function()
+				local cam = Workspace.CurrentCamera
+				local p = mp(cam and cam.ViewportSize / 2 or virtualCursor)
+				passFlash()
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, 0, false, game, 0)
+			end)
+
+		-- زر إظهار/إخفاء واجهة يد سوني عند الحاجة
+		local toggle = Instance.new("TextButton")
+		toggle.Name = "PS_ShowHide"
+		toggle.AnchorPoint = Vector2.new(0.5, 0)
+		toggle.Position = UDim2.fromScale(0.5, 0.025)
+		toggle.Size = UDim2.fromOffset(86, 28)
+		toggle.BackgroundColor3 = Color3.fromRGB(30, 38, 52)
+		toggle.BackgroundTransparency = 0.15
+		toggle.Text = "PS  ◉"
+		toggle.TextColor3 = Color3.new(1,1,1)
+		toggle.Font = Enum.Font.GothamBold
+		toggle.TextSize = 14
+		toggle.ZIndex = 33
+		toggle.Parent = ps
+		Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 8)
+		local shown = true
+		toggle.Activated:Connect(function()
+			shown = not shown
+			for _, child in ipairs(ps:GetChildren()) do
+				if child ~= toggle then
+					if child:IsA("GuiObject") then child.Visible = shown end
+				end
+			end
+			toggle.Text = shown and "PS  ◉" or "PS  ○"
+		end)
+	end
+end
