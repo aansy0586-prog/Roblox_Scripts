@@ -300,6 +300,11 @@ local function camBlock()
 	return CONFIG.CAMERA_ONLY_RCLICK or state.freeCam == true
 end
 
+-- الكاميرا الحرة مربوطة بوجود زر RClick: لو حذفت الزر تتوقف
+local function freeCamOn()
+	return state.freeCam == true and active.RClick ~= nil
+end
+
 local touchLayer = Instance.new("Frame")
 touchLayer.Name = "TouchLayer"
 touchLayer.Size = UDim2.new(1, 0, 1, 0)
@@ -423,7 +428,7 @@ touchLayer.InputBegan:Connect(function(input)
 	local cancelled = false
 	local lastVirtual = startPos + inset
 	-- أثناء تحريك الكاميرا (RClick أو منظور أول أو كاميرا حرة) نستخدم حركة نسبية دائمًا
-	local mode = (rightHeld or effectiveLock or state.freeCam) and "pad" or touchMode
+	local mode = (rightHeld or effectiveLock or freeCamOn()) and "pad" or touchMode
 
 	local function update()
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
@@ -442,7 +447,7 @@ touchLayer.InputBegan:Connect(function(input)
 			local delta = pos - lastPos
 			lastPos = pos
 			moved += delta.Magnitude
-			if rightHeld or (state.freeCam and not effectiveLock) then
+			if rightHeld or (freeCamOn() and not effectiveLock) then
 				-- RClick مضغوط أو الكاميرا الحرة شغالة: تحريك الكاميرا
 				pendingDelta += delta * CONFIG.CAMERA_SPEED * camSens()
 			elseif effectiveLock then
@@ -1863,6 +1868,14 @@ function removeElement(id)
 	if not e then return end
 	if selectedId == id then hideSizeBar() end
 	releaseBtn(e.obj)
+	if id == "RClick" then
+		-- حذف زر RClick يوقف حركة الكاميرا فورًا
+		rightHeld = false
+		pendingDelta = Vector2.zero
+		if not effectiveLock then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
+	end
 	active[id] = nil
 	e.obj:Destroy()
 	state.enabled[id] = false
