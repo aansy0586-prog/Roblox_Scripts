@@ -40,6 +40,8 @@ local CONFIG = {
 	CAM_RAD_PER_PX = 0.0035,
 	CAMERA_ONLY_RCLICK = true, -- الكاميرا تتحرك فقط من زر RClick
 	CAMERA_SPEED = 1.5,
+	STICK_SPEED = 14,        -- سرعة عصا الكاميرا (يد سوني الافتراضية) بالبكسل لكل إطار عند أقصى ميلان
+	STICK_DEADZONE = 0.15,   -- المنطقة الميتة للعصا
 	SAVE_FILE = "mobile_controls_layout.json",
 }
 
@@ -91,6 +93,27 @@ local DEFAULT_POS = {
 	NumBar = { 0.30, 0.88 },
 	ShiftLock = { 0.6375, 0.667 },
 	Space     = { 0.8125, 0.78 },
+	-- يد سوني الافتراضية
+	PS_L2 = { 0.03, 0.12 }, PS_L1 = { 0.03, 0.24 },
+	PS_R2 = { 0.90, 0.12 }, PS_R1 = { 0.90, 0.24 },
+	PS_Triangle = { 0.84, 0.34 }, PS_Square = { 0.78, 0.46 },
+	PS_Circle = { 0.90, 0.46 }, PS_Cross = { 0.84, 0.58 },
+	PS_Up = { 0.10, 0.34 }, PS_Left = { 0.05, 0.46 },
+	PS_Right = { 0.15, 0.46 }, PS_Down = { 0.10, 0.58 },
+	PS_Share = { 0.40, 0.04 }, PS_Options = { 0.50, 0.04 },
+	PS_RStick = { 0.55, 0.50 },
+}
+
+-- يد سوني الافتراضية: جدول مشترك (عشان نحافظ على عدد المتغيرات المحلية)
+local PS = {
+	GROUP = "🎮 يد سوني",
+	ids = {},
+	DEFAULT = {
+		PS_Cross = "key:Space", PS_Circle = "key:LeftControl", PS_Square = "key:E", PS_Triangle = "key:F",
+		PS_L1 = "shiftlock", PS_L2 = "aimhold", PS_R1 = "rclick", PS_R2 = "fire",
+		PS_Up = "zoomin", PS_Down = "zoomout", PS_Left = "key:Q", PS_Right = "key:Tab",
+		PS_Share = "settings", PS_Options = "key:Escape",
+	},
 }
 
 local state = { enabled = {}, pos = {}, scale = 1, fov = CONFIG.FOV, sens = CONFIG.SENSITIVITY }
@@ -128,8 +151,18 @@ do
 	state.fov = math.clamp(tonumber(state.fov) or CONFIG.FOV, 30, 120)
 	state.sens = math.clamp(tonumber(state.sens) or CONFIG.SENSITIVITY, 0.1, 3)
 	-- ميزات الكاميرا الجديدة (افتراضيًا مطفّاة)
+	-- أول مرة يشتغل فيها هذا الإصدار: الخيارين ON افتراضيًا (بعدها يحفظ اختيارك)
+	if not state.camDefaultsApplied then
+		state.freeCam = true
+		state.rclickTwo = true
+		state.camDefaultsApplied = true
+	end
 	state.freeCam = state.freeCam == true     -- كاميرا بدون RClick
 	state.rclickTwo = state.rclickTwo == true -- RClick بإصبعين
+	if type(state.psmap) ~= "table" then state.psmap = {} end
+	for k, v in pairs(PS.DEFAULT) do
+		if state.psmap[k] == nil then state.psmap[k] = v end
+	end
 	local padDefaults = { Enabled = true, FireR2 = true, HideUI = true }
 	if type(state.pad) ~= "table" then state.pad = {} end
 	for k, v in pairs(padDefaults) do
@@ -1533,6 +1566,175 @@ addSpec({ id = "TouchMode", title = "وضع اللمس (مباشر / تراك ب
 addSpec({ id = "Unstick", title = "فك التعليق", label = "Unstick", group = GROUP_TOOLS, size = Vector2.new(120, 40),
 	build = function(s) return buildUnstick(s.size) end })
 
+-- ========== يد سوني افتراضية على الشاشة (أزرار قابلة للتخصيص + عصا كاميرا) ==========
+-- كل زر له وظيفة تختارها بنفسك: في وضع "تعديل الأماكن" اضغط الزر ثم اضغط "الوظيفة".
+-- العصا اليمين (RS) تحرك الكاميرا بشكل تناظري (كل ما بعدت عن المركز زادت السرعة).
+do
+	-- قائمة الوظائف المشتركة (تستخدمها الأزرار الافتراضية وتبويب اليد الحقيقية)
+	PS.ACTIONS = {
+		{ "", "افتراضي (روبلوكس)" },
+		{ "shiftlock", "Shift Lock (تشغيل/إطفاء)" },
+		{ "aimhold", "Aim (طول ما ماسك)" },
+		{ "aimtoggle", "Aim (ضغطة)" },
+		{ "fire", "كليك يسار (إطلاق)" },
+		{ "rclick", "كليك يمين" },
+		{ "mclick", "كليك وسط" },
+		{ "zoomin", "زوم +" },
+		{ "zoomout", "زوم −" },
+		{ "settings", "فتح الإعدادات" },
+		{ "unstick", "فك التعليق" },
+	}
+	local numNames = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Zero" }
+	for i, n in ipairs(numNames) do
+		table.insert(PS.ACTIONS, { "key:" .. n, "رقم " .. tostring(i % 10) })
+	end
+	for _, k in ipairs({
+		{ "Space", "Space" }, { "LeftShift", "Shift" }, { "LeftControl", "Ctrl" }, { "Tab", "Tab" },
+		{ "Return", "Enter" }, { "Escape", "Esc" }, { "Backspace", "Backspace" },
+	}) do
+		table.insert(PS.ACTIONS, { "key:" .. k[1], "مفتاح " .. k[2] })
+	end
+	for c in string.gmatch("ABCDEFGHIJKLMNOPQRSTUVWXYZ", ".") do
+		table.insert(PS.ACTIONS, { "key:" .. c, "مفتاح " .. c })
+	end
+	PS.TITLE = {}
+	for _, a in ipairs(PS.ACTIONS) do PS.TITLE[a[1]] = a[2] end
+	PS.TITLE[""] = "بدون وظيفة"
+
+	PS.hasAction = {}
+
+	local function psButton(spec, round, textSize, color)
+		local cur = nil
+		local b = makeHoldButton(spec.label, spec.size,
+			function()
+				local act = state.psmap[spec.id]
+				cur = (type(act) == "string" and act ~= "" and PS.resolve) and PS.resolve(act) or nil
+				if cur then cur.down() end
+			end,
+			function()
+				local a = cur
+				cur = nil
+				if a and a.up then a.up() end
+			end
+		)
+		b.TextSize = textSize or 20
+		if color then b.TextColor3 = color end
+		Instance.new("UICorner", b).CornerRadius = round and UDim.new(1, 0) or UDim.new(0, 8)
+		return b
+	end
+
+	local function addPS(id, title, label, size, round, textSize, color)
+		PS.hasAction[id] = true
+		table.insert(PS.ids, id)
+		addSpec({ id = id, title = title, label = label, group = PS.GROUP, size = size,
+			build = function(s) return psButton(s, round, textSize, color) end })
+	end
+
+	-- أزرار الوجه (✕ ○ □ △)
+	addPS("PS_Triangle", "سوني: مثلث △", "△", Vector2.new(60, 60), true, 28, Color3.fromRGB(80, 220, 160))
+	addPS("PS_Square", "سوني: مربع □", "□", Vector2.new(60, 60), true, 28, Color3.fromRGB(255, 130, 190))
+	addPS("PS_Circle", "سوني: دائرة ○", "○", Vector2.new(60, 60), true, 28, Color3.fromRGB(255, 90, 90))
+	addPS("PS_Cross", "سوني: إكس ✕", "✕", Vector2.new(60, 60), true, 28, Color3.fromRGB(110, 170, 255))
+	-- الأكتاف والزنادات
+	addPS("PS_L1", "سوني: L1", "L1", Vector2.new(70, 42), false, 20)
+	addPS("PS_L2", "سوني: L2", "L2", Vector2.new(70, 42), false, 20)
+	addPS("PS_R1", "سوني: R1", "R1", Vector2.new(70, 42), false, 20)
+	addPS("PS_R2", "سوني: R2", "R2", Vector2.new(70, 42), false, 20)
+	-- الأسهم
+	addPS("PS_Up", "سوني: سهم ↑", "▲", Vector2.new(50, 50), false, 22)
+	addPS("PS_Down", "سوني: سهم ↓", "▼", Vector2.new(50, 50), false, 22)
+	addPS("PS_Left", "سوني: سهم ←", "◀", Vector2.new(50, 50), false, 22)
+	addPS("PS_Right", "سوني: سهم →", "▶", Vector2.new(50, 50), false, 22)
+	-- Share / Options
+	addPS("PS_Share", "سوني: Share", "SHARE", Vector2.new(70, 34), false, 14)
+	addPS("PS_Options", "سوني: Options", "OPTIONS", Vector2.new(80, 34), false, 14)
+
+	-- العصا اليمين: تحرك الكاميرا
+	local function buildRStick(spec)
+		local size = spec.size
+		local vec = Vector2.zero
+
+		local base = Instance.new("Frame")
+		base.Name = "PS_RStick"
+		base.Size = UDim2.fromOffset(size.X, size.Y)
+		base.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+		base.BackgroundTransparency = 0.3
+		base.Active = true
+		base.Parent = gui
+		Instance.new("UICorner", base).CornerRadius = UDim.new(1, 0)
+		local ring = Instance.new("UIStroke", base)
+		ring.Color = Color3.fromRGB(110, 170, 255)
+		ring.Thickness = 2
+		ring.Transparency = 0.4
+
+		local tag = Instance.new("TextLabel")
+		tag.Size = UDim2.new(1, 0, 0, 18)
+		tag.Position = UDim2.new(0, 0, 0.06, 0)
+		tag.BackgroundTransparency = 1
+		tag.Text = "RS · كاميرا"
+		tag.TextColor3 = Color3.fromRGB(180, 200, 230)
+		tag.Font = Enum.Font.SourceSansBold
+		tag.TextSize = 14
+		tag.Parent = base
+
+		local knob = Instance.new("Frame")
+		knob.Size = UDim2.new(0.42, 0, 0.42, 0)
+		knob.AnchorPoint = Vector2.new(0.5, 0.5)
+		knob.Position = UDim2.new(0.5, 0, 0.5, 0)
+		knob.BackgroundColor3 = Color3.fromRGB(110, 170, 255)
+		knob.BackgroundTransparency = 0.2
+		knob.Parent = base
+		Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+		local function reset()
+			vec = Vector2.zero
+			knob.Position = UDim2.new(0.5, 0, 0.5, 0)
+		end
+
+		local function update(input)
+			local sz = base.AbsoluteSize
+			local center = base.AbsolutePosition + sz / 2
+			local off = Vector2.new(input.Position.X, input.Position.Y) - center
+			local travel = (sz.X / 2) * 0.62
+			local clamped = off
+			if off.Magnitude > travel then clamped = off.Unit * travel end
+			knob.Position = UDim2.new(0.5 + clamped.X / sz.X, 0, 0.5 + clamped.Y / sz.Y, 0)
+			vec = clamped / travel
+		end
+
+		base.InputBegan:Connect(function(input)
+			if editMode or not isPress(input) or held[base] then return end
+			held[base] = { input = input, release = reset }
+			update(input)
+		end)
+
+		local conn
+		conn = UserInputService.InputChanged:Connect(function(input)
+			if not base.Parent then conn:Disconnect() return end
+			local h = held[base]
+			if h and input == h.input then update(h.input) end
+		end)
+
+		-- كل إطار: الكاميرا تتحرك بقدر ميلان العصا
+		local loop
+		loop = RunService.RenderStepped:Connect(function(dt)
+			if not base.Parent then loop:Disconnect() return end
+			local m = vec.Magnitude
+			local dz = CONFIG.STICK_DEADZONE
+			if m > dz then
+				local scaled = vec.Unit * ((m - dz) / (1 - dz))
+				pendingDelta += scaled * CONFIG.STICK_SPEED * camSens() * math.min(dt * 60, 3)
+			end
+		end)
+
+		return base
+	end
+
+	table.insert(PS.ids, "PS_RStick")
+	addSpec({ id = "PS_RStick", title = "سوني: العصا اليمين (تحرك الكاميرا)", label = "RS", group = PS.GROUP,
+		size = Vector2.new(150, 150), build = buildRStick })
+end
+
 -- ========== إدارة الأزرار (إضافة / إزالة / سحب) ==========
 local padHidden = false -- واجهة اللمس مخفية لأن يد التحكم هي المستخدمة
 local applyPadVisibility
@@ -1608,7 +1810,7 @@ local function applySizing(id, obj, sc)
 	local spec = catalogById[id]
 	if not spec then return end
 	local z, w, h = sizingOf(id)
-	if id == "Joystick" then w, h = 1, 1 end -- الجويستك يبقى دايري
+	if id == "Joystick" or id == "PS_RStick" then w, h = 1, 1 end -- الجويستك يبقى دايري
 	obj.Size = UDim2.fromOffset(spec.size.X * w, spec.size.Y * h)
 	sc.Scale = state.scale * z
 end
@@ -1732,7 +1934,7 @@ generalFrame.Position = UDim2.new(0, 8, 0, 48)
 generalFrame.BackgroundTransparency = 1
 generalFrame.BorderSizePixel = 0
 generalFrame.ScrollBarThickness = 4
-generalFrame.CanvasSize = UDim2.new(0, 0, 0, 370)
+generalFrame.CanvasSize = UDim2.new(0, 0, 0, 416)
 generalFrame.Parent = panel
 
 local buttonsFrame = Instance.new("ScrollingFrame")
@@ -1918,35 +2120,9 @@ do
 		{ "DPadRight", "D-Pad →" },
 	}
 
-	local ACTIONS = {
-		{ "", "افتراضي (روبلوكس)" },
-		{ "shiftlock", "Shift Lock (تشغيل/إطفاء)" },
-		{ "aimhold", "Aim (طول ما ماسك)" },
-		{ "aimtoggle", "Aim (ضغطة)" },
-		{ "fire", "كليك يسار (إطلاق)" },
-		{ "rclick", "كليك يمين" },
-		{ "mclick", "كليك وسط" },
-		{ "zoomin", "زوم +" },
-		{ "zoomout", "زوم −" },
-		{ "settings", "فتح الإعدادات" },
-		{ "unstick", "فك التعليق" },
-	}
-	local numNames = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Zero" }
-	for i, n in ipairs(numNames) do
-		table.insert(ACTIONS, { "key:" .. n, "رقم " .. tostring(i % 10) })
-	end
-	for _, k in ipairs({
-		{ "Space", "Space" }, { "LeftShift", "Shift" }, { "LeftControl", "Ctrl" }, { "Tab", "Tab" },
-		{ "Return", "Enter" }, { "Escape", "Esc" }, { "Backspace", "Backspace" },
-	}) do
-		table.insert(ACTIONS, { "key:" .. k[1], "مفتاح " .. k[2] })
-	end
-	for c in string.gmatch("ABCDEFGHIJKLMNOPQRSTUVWXYZ", ".") do
-		table.insert(ACTIONS, { "key:" .. c, "مفتاح " .. c })
-	end
-
-	local titleOf = {}
-	for _, a in ipairs(ACTIONS) do titleOf[a[1]] = a[2] end
+	local ACTIONS, titleOf = PS.ACTIONS, {}
+	for k, v in pairs(PS.TITLE) do titleOf[k] = v end
+	titleOf[""] = "افتراضي (روبلوكس)"
 
 	-- نافذة اختيار الوظيفة
 	local pick = Instance.new("Frame")
@@ -2401,10 +2577,20 @@ do
 		l.Parent = bar
 	end
 
+	local actBtn -- زر اختيار وظيفة أزرار سوني (يتعرّف بعد زر إعادة الحجم)
 	local function info()
 		if not selectedId then
 			title.Text = ""
 			return
+		end
+		local ps = PS.hasAction[selectedId] == true
+		bar.Size = UDim2.fromOffset(372, ps and 176 or 134)
+		if actBtn then
+			actBtn.Visible = ps
+			if ps then
+				local cur = state.psmap[selectedId] or ""
+				actBtn.Text = "الوظيفة: " .. tostring(PS.TITLE[cur] or cur) .. "  ▸"
+			end
 		end
 		local z, w, h = sizingOf(selectedId)
 		local spec = catalogById[selectedId]
@@ -2422,7 +2608,7 @@ do
 	-- field: "s" تكبير | "w" تمديد العرض | "h" تمديد الطول
 	local function nudge(field, d)
 		if not selectedId then return end
-		if selectedId == "Joystick" and field ~= "s" then return end
+		if (selectedId == "Joystick" or selectedId == "PS_RStick") and field ~= "s" then return end
 		local z = state.sizes[selectedId]
 		if type(z) ~= "table" then
 			z = { s = 1, w = 1, h = 1 }
@@ -2464,6 +2650,91 @@ do
 		applySelected()
 	end)
 
+	-- زر + نافذة اختيار وظيفة الزر (لأزرار يد سوني فقط)
+	local pickF = Instance.new("Frame")
+	pickF.Name = "PSPicker"
+	pickF.Size = UDim2.new(0, 340, 1, -70)
+	pickF.Position = UDim2.new(0.5, -170, 0, 56)
+	pickF.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	pickF.Active = true
+	pickF.Visible = false
+	pickF.ZIndex = 40
+	pickF.Parent = gui
+	Instance.new("UICorner", pickF).CornerRadius = UDim.new(0, 10)
+
+	local pickT = Instance.new("TextLabel")
+	pickT.Size = UDim2.new(1, -16, 0, 26)
+	pickT.Position = UDim2.fromOffset(8, 4)
+	pickT.BackgroundTransparency = 1
+	pickT.Text = "اختر وظيفة الزر"
+	pickT.TextColor3 = Color3.new(1, 1, 1)
+	pickT.Font = Enum.Font.SourceSansBold
+	pickT.TextSize = 17
+	pickT.ZIndex = 41
+	pickT.Parent = pickF
+
+	local pickL = Instance.new("ScrollingFrame")
+	pickL.Size = UDim2.new(1, -16, 1, -84)
+	pickL.Position = UDim2.fromOffset(8, 34)
+	pickL.BackgroundTransparency = 1
+	pickL.BorderSizePixel = 0
+	pickL.ScrollBarThickness = 4
+	pickL.CanvasSize = UDim2.new(0, 0, 0, 0)
+	pickL.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	pickL.ZIndex = 41
+	pickL.Parent = pickF
+	local pll = Instance.new("UIListLayout")
+	pll.Padding = UDim.new(0, 4)
+	pll.SortOrder = Enum.SortOrder.LayoutOrder
+	pll.Parent = pickL
+
+	for i, a in ipairs(PS.ACTIONS) do
+		local ob = Instance.new("TextButton")
+		ob.Size = UDim2.new(1, -8, 0, 34)
+		ob.LayoutOrder = i
+		ob.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+		ob.Text = (a[1] == "") and PS.TITLE[""] or a[2]
+		ob.TextColor3 = Color3.new(1, 1, 1)
+		ob.Font = Enum.Font.SourceSans
+		ob.TextSize = 16
+		ob.AutoButtonColor = false
+		ob.Selectable = false
+		ob.ZIndex = 42
+		ob.Parent = pickL
+		Instance.new("UICorner", ob).CornerRadius = UDim.new(0, 6)
+		ob.Activated:Connect(function()
+			if selectedId and PS.hasAction[selectedId] then
+				state.psmap[selectedId] = a[1]
+				saveState()
+				info()
+			end
+			pickF.Visible = false
+		end)
+	end
+
+	local pickX = Instance.new("TextButton")
+	pickX.AnchorPoint = Vector2.new(0, 1)
+	pickX.Size = UDim2.new(1, -16, 0, 34)
+	pickX.Position = UDim2.new(0, 8, 1, -6)
+	pickX.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+	pickX.Text = "إلغاء"
+	pickX.TextColor3 = Color3.new(1, 1, 1)
+	pickX.Font = Enum.Font.SourceSansBold
+	pickX.TextSize = 18
+	pickX.AutoButtonColor = false
+	pickX.Selectable = false
+	pickX.ZIndex = 42
+	pickX.Parent = pickF
+	Instance.new("UICorner", pickX).CornerRadius = UDim.new(0, 6)
+	pickX.Activated:Connect(function() pickF.Visible = false end)
+
+	actBtn = mk("", 8, 134, 356, 36, Color3.fromRGB(0, 120, 200))
+	actBtn.Visible = false
+	actBtn.TextSize = 17
+	actBtn.Activated:Connect(function()
+		if selectedId and PS.hasAction[selectedId] then pickF.Visible = true end
+	end)
+
 	function selectElement(id)
 		selectedId = id
 		for eid, e in pairs(active) do
@@ -2476,6 +2747,7 @@ do
 	function hideSizeBar()
 		selectedId = nil
 		bar.Visible = false
+		pickF.Visible = false
 		for _, e in pairs(active) do
 			e.stroke.Color = Color3.fromRGB(255, 210, 0)
 		end
@@ -2556,6 +2828,32 @@ rcTwoBtn.Activated:Connect(function()
 	saveState()
 end)
 
+-- يد سوني الافتراضية: إضافة/إزالة كل الأزرار دفعة وحدة (وتقدر تخصص كل زر لحاله من وضع التعديل)
+do
+	local psAllBtn = panelButton(generalFrame, "", 362)
+	local function anyActive()
+		for _, id in ipairs(PS.ids) do
+			if active[id] then return true end
+		end
+		return false
+	end
+	function PS.refreshAll()
+		local on = anyActive()
+		psAllBtn.Text = on and "🎮 إزالة يد سوني الافتراضية" or "🎮 إضافة يد سوني الافتراضية"
+		psAllBtn.BackgroundColor3 = on and Color3.fromRGB(170, 50, 50) or Color3.fromRGB(0, 120, 200)
+	end
+	PS.refreshAll()
+	psAllBtn.Activated:Connect(function()
+		local on = anyActive()
+		for _, id in ipairs(PS.ids) do
+			if on then removeElement(id) else spawnElement(id) end
+			refreshRow(id)
+		end
+		PS.refreshAll()
+		saveState()
+	end)
+end
+
 -- وضع التعديل: اسحب أي زر لمكانه ثم اضغط "تم"
 local function setEditMode(on, kind)
 	editMode = on
@@ -2599,6 +2897,7 @@ end)
 local rowButtons = {}
 
 function refreshRow(id)
+	if PS.refreshAll then PS.refreshAll() end
 	local b = rowButtons[id]
 	if not b then return end
 	if active[id] then
@@ -2617,7 +2916,7 @@ do
 	list.Parent = buttonsFrame
 
 	local order = 0
-	for _, group in ipairs({ GROUP_MOUSE, GROUP_KEYS, GROUP_TOOLS }) do
+	for _, group in ipairs({ GROUP_MOUSE, GROUP_KEYS, GROUP_TOOLS, PS.GROUP }) do
 		order += 1
 		local header = Instance.new("TextLabel")
 		header.Size = UDim2.new(1, -8, 0, 26)
@@ -2685,6 +2984,8 @@ resetBtn.Activated:Connect(function()
 	end
 	state.pos = {}
 	state.sizes = {}
+	state.psmap = {}
+	for k, v in pairs(PS.DEFAULT) do state.psmap[k] = v end
 	state.enabled = {}
 	autoCount = 0
 	for _, id in ipairs(DEFAULT_ENABLED) do
@@ -2782,7 +3083,7 @@ do
 		end },
 	}
 
-	local function resolve(act)
+	function PS.resolve(act)
 		if padActions[act] then return padActions[act] end
 		local k = type(act) == "string" and act:match("^key:(%w+)$")
 		if k then
@@ -2815,7 +3116,7 @@ do
 			if state.pad.Enabled then
 				local act = state.pad.map[input.KeyCode.Name]
 				if act and act ~= "" and not (act == "fire" and not state.pad.FireR2) then
-					local a = resolve(act)
+					local a = PS.resolve(act)
 					if a then
 						if inputState == Enum.UserInputState.Begin then
 							pcall(a.down)
