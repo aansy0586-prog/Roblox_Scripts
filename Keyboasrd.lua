@@ -127,6 +127,9 @@ do
 	state.scale = math.clamp(tonumber(state.scale) or 1, 0.5, 2)
 	state.fov = math.clamp(tonumber(state.fov) or CONFIG.FOV, 30, 120)
 	state.sens = math.clamp(tonumber(state.sens) or CONFIG.SENSITIVITY, 0.1, 3)
+	-- ميزات الكاميرا الجديدة (افتراضيًا مطفّاة)
+	state.freeCam = state.freeCam == true     -- كاميرا بدون RClick
+	state.rclickTwo = state.rclickTwo == true -- RClick بإصبعين
 	local padDefaults = { Enabled = true, FireR2 = true, HideUI = true }
 	if type(state.pad) ~= "table" then state.pad = {} end
 	for k, v in pairs(padDefaults) do
@@ -259,12 +262,17 @@ local function makeHoldButton(label, size, onDown, onUp)
 end
 
 -- ========== طبقة اللمس (لمس مباشر / تراك باد) ==========
+-- الطبقة Active تمنع كاميرا روبلوكس الافتراضية من التحرك باللمس، وتبقى كذلك لو "كاميرا بدون RClick" شغالة
+local function camBlock()
+	return CONFIG.CAMERA_ONLY_RCLICK or state.freeCam == true
+end
+
 local touchLayer = Instance.new("Frame")
 touchLayer.Name = "TouchLayer"
 touchLayer.Size = UDim2.new(1, 0, 1, 0)
 touchLayer.BackgroundTransparency = 1
 touchLayer.ZIndex = 0
-touchLayer.Active = CONFIG.CAMERA_ONLY_RCLICK -- يمنع لمس الشاشة من تحريك كاميرا روبلوكس
+touchLayer.Active = camBlock() -- يمنع لمس الشاشة من تحريك كاميرا روبلوكس
 touchLayer.Parent = gui
 
 -- طبقة اللمس Active عشان تمنع كاميرا روبلوكس الافتراضية، لكنها كانت تبلع كليكات الماوس الوهمية
@@ -276,7 +284,7 @@ local function passFlash()
 	task.delay(0.15, function()
 		clickPass = math.max(0, clickPass - 1)
 		if clickPass == 0 then
-			touchLayer.Active = CONFIG.CAMERA_ONLY_RCLICK
+			touchLayer.Active = camBlock()
 		end
 	end)
 end
@@ -381,13 +389,19 @@ touchLayer.InputBegan:Connect(function(input)
 	local isDown = false
 	local cancelled = false
 	local lastVirtual = startPos + inset
-	-- أثناء تحريك الكاميرا (RClick أو منظور أول) نستخدم حركة نسبية دائمًا
-	local mode = (rightHeld or effectiveLock) and "pad" or touchMode
+	-- أثناء تحريك الكاميرا (RClick أو منظور أول أو كاميرا حرة) نستخدم حركة نسبية دائمًا
+	local mode = (rightHeld or effectiveLock or state.freeCam) and "pad" or touchMode
 
 	local function update()
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if mode == "tap" then
-			if rightHeld then return end
+			if rightHeld then
+				-- RClick انضغط بعد بداية اللمسة: الإصبع يحرك الكاميرا
+				local d = pos - lastPos
+				lastPos = pos
+				pendingDelta += d * CONFIG.CAMERA_SPEED * camSens()
+				return
+			end
 			lastVirtual = pos + inset
 			virtualCursor = lastVirtual
 			sendMoveThrottled(lastVirtual)
@@ -395,8 +409,8 @@ touchLayer.InputBegan:Connect(function(input)
 			local delta = pos - lastPos
 			lastPos = pos
 			moved += delta.Magnitude
-			if rightHeld then
-				-- RClick مضغوط: تحريك الكاميرا
+			if rightHeld or (state.freeCam and not effectiveLock) then
+				-- RClick مضغوط أو الكاميرا الحرة شغالة: تحريك الكاميرا
 				pendingDelta += delta * CONFIG.CAMERA_SPEED * camSens()
 			elseif effectiveLock then
 				-- المؤشر مقفول: الكاميرا ما تتحرك إلا من RClick
@@ -988,6 +1002,7 @@ local function buildMouseButton(label, size, button, plain)
 	)
 
 	-- RClick: اسحب إصبعك على الزر نفسه عشان تحرك الكاميرا (بإصبع واحد)
+	-- لو "RClick بإصبعين" شغّال: الزر يثبت بس، والكاميرا تتحرك بالإصبع الثاني
 	if isCam then
 		local lastPos
 		b.InputBegan:Connect(function(input)
@@ -1002,7 +1017,7 @@ local function buildMouseButton(label, size, button, plain)
 				return
 			end
 			local h = held[b]
-			if h and input == h.input and lastPos then
+			if h and input == h.input and lastPos and not state.rclickTwo then
 				local pos = Vector2.new(input.Position.X, input.Position.Y)
 				pendingDelta += (pos - lastPos) * CONFIG.CAMERA_SPEED * camSens()
 				lastPos = pos
@@ -1710,10 +1725,14 @@ tabPad.Position = UDim2.new(3 / 4, 4, 0, 8)
 tabPad.Text = "🎮 يد"
 tabPad.Parent = panel
 
-local generalFrame = Instance.new("Frame")
+-- تبويب "عام" صار ScrollingFrame عشان يتسع للأزرار الجديدة
+local generalFrame = Instance.new("ScrollingFrame")
 generalFrame.Size = UDim2.new(1, -16, 1, -52)
 generalFrame.Position = UDim2.new(0, 8, 0, 48)
 generalFrame.BackgroundTransparency = 1
+generalFrame.BorderSizePixel = 0
+generalFrame.ScrollBarThickness = 4
+generalFrame.CanvasSize = UDim2.new(0, 0, 0, 370)
 generalFrame.Parent = panel
 
 local buttonsFrame = Instance.new("ScrollingFrame")
@@ -2509,6 +2528,33 @@ calManualBtn.Size = UDim2.new(0.5, -3, 0, 36)
 calManualBtn.Position = UDim2.new(0.5, 3, 0, 230)
 calManualBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
 calManualBtn.Activated:Connect(enterCalibration)
+
+-- ميزة: كاميرا بدون RClick (سحب الشاشة يحرك الكاميرا مباشرة)
+local freeCamBtn = panelButton(generalFrame, "", 274)
+local function refreshFreeCam()
+	freeCamBtn.Text = state.freeCam and "🎥 كاميرا بدون RClick: ON" or "🎥 كاميرا بدون RClick: OFF"
+	freeCamBtn.BackgroundColor3 = state.freeCam and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(170, 50, 50)
+end
+refreshFreeCam()
+freeCamBtn.Activated:Connect(function()
+	state.freeCam = not state.freeCam
+	touchLayer.Active = camBlock()
+	refreshFreeCam()
+	saveState()
+end)
+
+-- ميزة: RClick بإصبعين (الزر يثبت، والكاميرا تتحرك بإصبع ثاني من أي مكان)
+local rcTwoBtn = panelButton(generalFrame, "", 318)
+local function refreshRcTwo()
+	rcTwoBtn.Text = state.rclickTwo and "🖐 RClick بإصبعين: ON" or "🖐 RClick بإصبعين: OFF"
+	rcTwoBtn.BackgroundColor3 = state.rclickTwo and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(170, 50, 50)
+end
+refreshRcTwo()
+rcTwoBtn.Activated:Connect(function()
+	state.rclickTwo = not state.rclickTwo
+	refreshRcTwo()
+	saveState()
+end)
 
 -- وضع التعديل: اسحب أي زر لمكانه ثم اضغط "تم"
 local function setEditMode(on, kind)
