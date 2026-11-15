@@ -22,6 +22,19 @@ local CONFIG = {
 	CAMERA_AUTODETECT = true, -- يكتشف تلقائيًا نوع كاميرا اللعبة ويضبط الدوران
 	AIM_HOLD_RMB = true,  -- Aim يمسك الكليك اليمين (ADS) في ألعاب الأسلحة
 	PC_MODE_AT_START = false, -- true = يشغّل وضع PC (تمويه قدرات الإدخال) أول ما يشتغل السكربت
+	-- يد تحكم (سوني DualShock/DualSense أو Xbox): الزر -> الإجراء
+	-- الإجراءات: shiftlock | aimhold | aimtoggle | fire | rclick | settings | unstick | zoomin | zoomout | key:E (أي مفتاح)
+	-- روبلوكس تحول: ✕=ButtonA ○=ButtonB □=ButtonX △=ButtonY | Share=ButtonSelect Options=ButtonStart
+	PAD_MAP = {
+		ButtonL1 = "shiftlock",
+		ButtonL2 = "aimhold",
+		ButtonR2 = "fire",
+		ButtonR1 = "rclick",
+		ButtonSelect = "settings",
+		DPadUp = "zoomin",
+		DPadDown = "zoomout",
+		ButtonR3 = "unstick",
+	},
 	SHOW_CURSOR = true,        -- نقطة تبين مكان المؤشر في التراك باد
 	CAMERA_METHOD = "script",  -- "script" = تدوير بالسكربت | "mouse" = حركة ماوس وهمية
 	CAM_RAD_PER_PX = 0.0035,
@@ -75,6 +88,7 @@ local DEFAULT_POS = {
 	LClickPlain = { 0.64, 0.28 },
 	DPad = { 0.27, 0.45 },
 	Aim = { 0.545, 0.68 },
+	NumBar = { 0.30, 0.88 },
 	ShiftLock = { 0.6375, 0.667 },
 	Space     = { 0.8125, 0.78 },
 }
@@ -113,6 +127,15 @@ do
 	state.scale = math.clamp(tonumber(state.scale) or 1, 0.5, 2)
 	state.fov = math.clamp(tonumber(state.fov) or CONFIG.FOV, 30, 120)
 	state.sens = math.clamp(tonumber(state.sens) or CONFIG.SENSITIVITY, 0.1, 3)
+	local padDefaults = { Enabled = true, FireR2 = true, HideUI = true }
+	if type(state.pad) ~= "table" then state.pad = {} end
+	for k, v in pairs(padDefaults) do
+		if type(state.pad[k]) ~= type(v) then state.pad[k] = v end
+	end
+	if type(state.pad.map) ~= "table" then
+		state.pad.map = {}
+		for k, v in pairs(CONFIG.PAD_MAP) do state.pad.map[k] = v end
+	end
 end
 
 local saveQueued = false
@@ -1365,6 +1388,59 @@ local function buildPCMode(size)
 	return b
 end
 
+-- شريط الأرقام 1-0 (لمسة على الرقم = ضغط المفتاح؛ مفيد لاختيار الأدوات/الأسلحة)
+local function buildNumBar(size)
+	local names = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Zero" }
+	local base = Instance.new("Frame")
+	base.Name = "NumBar"
+	base.Size = UDim2.fromOffset(size.X, size.Y)
+	base.BackgroundTransparency = 1
+	base.Active = true
+	base.Parent = gui
+
+	local dark = Color3.fromRGB(40, 40, 40)
+	local cells = {}
+	for i = 1, 10 do
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(0.1, -4, 1, 0)
+		l.Position = UDim2.new((i - 1) / 10, 2, 0, 0)
+		l.BackgroundColor3 = dark
+		l.BackgroundTransparency = 0.3
+		l.Text = tostring(i % 10)
+		l.TextColor3 = Color3.new(1, 1, 1)
+		l.Font = Enum.Font.SourceSansBold
+		l.TextSize = 20
+		l.Parent = base
+		Instance.new("UICorner", l).CornerRadius = UDim.new(0, 6)
+		cells[i] = l
+	end
+
+	local pressed = nil
+	local function press(i, down)
+		VirtualInputManager:SendKeyEvent(down, Enum.KeyCode[names[i]], false, game)
+		cells[i].BackgroundColor3 = down and Color3.fromRGB(0, 150, 255) or dark
+	end
+
+	base.InputBegan:Connect(function(input)
+		if editMode or not isPress(input) or held[base] then return end
+		local x = input.Position.X - base.AbsolutePosition.X
+		local idx = math.clamp(math.floor(x / (base.AbsoluteSize.X / 10)) + 1, 1, 10)
+		pressed = idx
+		held[base] = {
+			input = input,
+			release = function()
+				if pressed then
+					press(pressed, false)
+					pressed = nil
+				end
+			end,
+		}
+		press(idx, true)
+	end)
+
+	return base
+end
+
 -- ========== كتالوج الأزرار ==========
 local GROUP_MOUSE, GROUP_KEYS, GROUP_TOOLS = "ماوس", "كيبورد", "أدوات"
 local catalog, catalogById = {}, {}
@@ -1423,6 +1499,8 @@ for i = 1, 12 do
 end
 
 -- أدوات
+addSpec({ id = "NumBar", title = "شريط الأرقام 1-0 (اختيار الأدوات)", label = "NumBar", group = GROUP_KEYS, size = Vector2.new(400, 40),
+	build = function(s) return buildNumBar(s.size) end })
 addSpec({ id = "Joystick", title = "جويستك WASD", label = "Joystick", group = GROUP_TOOLS, size = Vector2.new(170, 170),
 	build = function(s) return buildJoystick(s.size) end })
 addSpec({ id = "DPad", title = "D-Pad (أسهم تحرك WASD)", label = "DPad", group = GROUP_TOOLS, size = Vector2.new(150, 150),
@@ -1441,6 +1519,8 @@ addSpec({ id = "Unstick", title = "فك التعليق", label = "Unstick", grou
 	build = function(s) return buildUnstick(s.size) end })
 
 -- ========== إدارة الأزرار (إضافة / إزالة / سحب) ==========
+local padHidden = false -- واجهة اللمس مخفية لأن يد التحكم هي المستخدمة
+local applyPadVisibility
 local removeElement, refreshRow, selectElement, hideSizeBar
 local selectedId = nil
 local autoCount = 0
@@ -1557,6 +1637,7 @@ local function spawnElement(id)
 	attachDrag(id, obj)
 
 	active[id] = { obj = obj, scale = sc, stroke = stroke }
+	obj.Visible = (not padHidden) or editMode
 	state.enabled[id] = true
 end
 
@@ -1603,11 +1684,11 @@ local function styleTab(btn, selected)
 end
 
 local tabGeneral = Instance.new("TextButton")
-tabGeneral.Size = UDim2.new(1 / 3, -8, 0, 32)
-tabGeneral.Position = UDim2.new(0, 6, 0, 8)
+tabGeneral.Size = UDim2.new(1 / 4, -6, 0, 32)
+tabGeneral.Position = UDim2.new(0, 4, 0, 8)
 tabGeneral.Text = "عام"
 tabGeneral.Font = Enum.Font.SourceSansBold
-tabGeneral.TextSize = 18
+tabGeneral.TextSize = 14
 tabGeneral.TextColor3 = Color3.new(1, 1, 1)
 tabGeneral.AutoButtonColor = false
 tabGeneral.Selectable = false
@@ -1615,14 +1696,19 @@ tabGeneral.Parent = panel
 Instance.new("UICorner", tabGeneral).CornerRadius = UDim.new(0, 6)
 
 local tabButtons = tabGeneral:Clone()
-tabButtons.Position = UDim2.new(1 / 3, 6, 0, 8)
+tabButtons.Position = UDim2.new(1 / 4, 4, 0, 8)
 tabButtons.Text = "الأزرار"
 tabButtons.Parent = panel
 
 local tabShift = tabGeneral:Clone()
-tabShift.Position = UDim2.new(2 / 3, 6, 0, 8)
+tabShift.Position = UDim2.new(2 / 4, 4, 0, 8)
 tabShift.Text = "Shift Lock"
 tabShift.Parent = panel
+
+local tabPad = tabGeneral:Clone()
+tabPad.Position = UDim2.new(3 / 4, 4, 0, 8)
+tabPad.Text = "🎮 يد"
+tabPad.Parent = panel
 
 local generalFrame = Instance.new("Frame")
 generalFrame.Size = UDim2.new(1, -16, 1, -52)
@@ -1652,17 +1738,33 @@ shiftFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 shiftFrame.Visible = false
 shiftFrame.Parent = panel
 
+local padFrame = Instance.new("ScrollingFrame")
+padFrame.Size = UDim2.new(1, -16, 1, -52)
+padFrame.Position = UDim2.new(0, 8, 0, 48)
+padFrame.BackgroundTransparency = 1
+padFrame.BorderSizePixel = 0
+padFrame.ScrollBarThickness = 4
+padFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+padFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+padFrame.Visible = false
+padFrame.Parent = panel
+
 local function showTab(name)
 	generalFrame.Visible = (name == "general")
 	buttonsFrame.Visible = (name == "buttons")
 	shiftFrame.Visible = (name == "shift")
+	padFrame.Visible = (name == "pad")
+	local pk = panel:FindFirstChild("PadPicker")
+	if pk then pk.Visible = false end
 	styleTab(tabGeneral, name == "general")
 	styleTab(tabButtons, name == "buttons")
 	styleTab(tabShift, name == "shift")
+	styleTab(tabPad, name == "pad")
 end
 tabGeneral.Activated:Connect(function() showTab("general") end)
 tabButtons.Activated:Connect(function() showTab("buttons") end)
 tabShift.Activated:Connect(function() showTab("shift") end)
+tabPad.Activated:Connect(function() showTab("pad") end)
 showTab("general")
 
 -- صفوف إعدادات Shift Lock
@@ -1712,17 +1814,19 @@ do
 		return b
 	end
 
-	local function toggle(labelText, key)
+	local function toggle(labelText, key, tbl)
+		tbl = tbl or SL
 		local b = smallButton(row(labelText), "", -98, 90)
 		local function refresh()
-			b.Text = SL[key] and "ON" or "OFF"
-			b.BackgroundColor3 = SL[key] and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(170, 50, 50)
+			b.Text = tbl[key] and "ON" or "OFF"
+			b.BackgroundColor3 = tbl[key] and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(170, 50, 50)
 		end
 		refresh()
 		b.Activated:Connect(function()
-			SL[key] = not SL[key]
+			tbl[key] = not tbl[key]
 			refresh()
 			saveState()
+			if tbl == state.pad and applyPadVisibility then applyPadVisibility() end
 		end)
 	end
 
@@ -1762,6 +1866,218 @@ do
 	local testBtn = smallButton(tr, "Test", -98, 90)
 	testBtn.BackgroundColor3 = Color3.fromRGB(40, 110, 200)
 	testBtn.Activated:Connect(function() vibrate(true) end)
+
+	-- يد التحكم
+	toggle("Controller (Sony/Xbox)", "Enabled", state.pad)
+	toggle("R2 = Fire (click)", "FireR2", state.pad)
+	toggle("Hide touch UI with controller", "HideUI", state.pad)
+end
+
+-- تبويب يد التحكم: اختر أي زر وغيّر وظيفته
+do
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = padFrame
+
+	local BUTTONS = {
+		{ "ButtonA", "✕  Cross (A)" },
+		{ "ButtonB", "○  Circle (B)" },
+		{ "ButtonX", "□  Square (X)" },
+		{ "ButtonY", "△  Triangle (Y)" },
+		{ "ButtonL1", "L1" },
+		{ "ButtonR1", "R1" },
+		{ "ButtonL2", "L2" },
+		{ "ButtonR2", "R2" },
+		{ "ButtonL3", "L3 (ضغط العصا اليسار)" },
+		{ "ButtonR3", "R3 (ضغط العصا اليمين)" },
+		{ "ButtonSelect", "Share / Create" },
+		{ "ButtonStart", "Options" },
+		{ "DPadUp", "D-Pad ↑" },
+		{ "DPadDown", "D-Pad ↓" },
+		{ "DPadLeft", "D-Pad ←" },
+		{ "DPadRight", "D-Pad →" },
+	}
+
+	local ACTIONS = {
+		{ "", "افتراضي (روبلوكس)" },
+		{ "shiftlock", "Shift Lock (تشغيل/إطفاء)" },
+		{ "aimhold", "Aim (طول ما ماسك)" },
+		{ "aimtoggle", "Aim (ضغطة)" },
+		{ "fire", "كليك يسار (إطلاق)" },
+		{ "rclick", "كليك يمين" },
+		{ "mclick", "كليك وسط" },
+		{ "zoomin", "زوم +" },
+		{ "zoomout", "زوم −" },
+		{ "settings", "فتح الإعدادات" },
+		{ "unstick", "فك التعليق" },
+	}
+	local numNames = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Zero" }
+	for i, n in ipairs(numNames) do
+		table.insert(ACTIONS, { "key:" .. n, "رقم " .. tostring(i % 10) })
+	end
+	for _, k in ipairs({
+		{ "Space", "Space" }, { "LeftShift", "Shift" }, { "LeftControl", "Ctrl" }, { "Tab", "Tab" },
+		{ "Return", "Enter" }, { "Escape", "Esc" }, { "Backspace", "Backspace" },
+	}) do
+		table.insert(ACTIONS, { "key:" .. k[1], "مفتاح " .. k[2] })
+	end
+	for c in string.gmatch("ABCDEFGHIJKLMNOPQRSTUVWXYZ", ".") do
+		table.insert(ACTIONS, { "key:" .. c, "مفتاح " .. c })
+	end
+
+	local titleOf = {}
+	for _, a in ipairs(ACTIONS) do titleOf[a[1]] = a[2] end
+
+	-- نافذة اختيار الوظيفة
+	local pick = Instance.new("Frame")
+	pick.Name = "PadPicker"
+	pick.Size = UDim2.new(1, -16, 1, -52)
+	pick.Position = UDim2.new(0, 8, 0, 48)
+	pick.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	pick.Active = true
+	pick.Visible = false
+	pick.Parent = panel
+	Instance.new("UICorner", pick).CornerRadius = UDim.new(0, 8)
+
+	local pickTitle = Instance.new("TextLabel")
+	pickTitle.Size = UDim2.new(1, -16, 0, 26)
+	pickTitle.Position = UDim2.fromOffset(8, 4)
+	pickTitle.BackgroundTransparency = 1
+	pickTitle.TextColor3 = Color3.new(1, 1, 1)
+	pickTitle.Font = Enum.Font.SourceSansBold
+	pickTitle.TextSize = 17
+	pickTitle.Parent = pick
+
+	local pickList = Instance.new("ScrollingFrame")
+	pickList.Size = UDim2.new(1, -16, 1, -84)
+	pickList.Position = UDim2.fromOffset(8, 34)
+	pickList.BackgroundTransparency = 1
+	pickList.BorderSizePixel = 0
+	pickList.ScrollBarThickness = 4
+	pickList.CanvasSize = UDim2.new(0, 0, 0, 0)
+	pickList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	pickList.Parent = pick
+	local pl = Instance.new("UIListLayout")
+	pl.Padding = UDim.new(0, 4)
+	pl.SortOrder = Enum.SortOrder.LayoutOrder
+	pl.Parent = pickList
+
+	local pickClose = Instance.new("TextButton")
+	pickClose.AnchorPoint = Vector2.new(0, 1)
+	pickClose.Size = UDim2.new(1, -16, 0, 34)
+	pickClose.Position = UDim2.new(0, 8, 1, -6)
+	pickClose.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+	pickClose.Text = "إلغاء"
+	pickClose.TextColor3 = Color3.new(1, 1, 1)
+	pickClose.Font = Enum.Font.SourceSansBold
+	pickClose.TextSize = 18
+	pickClose.AutoButtonColor = false
+	pickClose.Selectable = false
+	pickClose.Parent = pick
+	Instance.new("UICorner", pickClose).CornerRadius = UDim.new(0, 6)
+	pickClose.Activated:Connect(function() pick.Visible = false end)
+
+	local rowButtons = {}
+	local currentCode = nil
+
+	local function refreshRows()
+		for code, b in pairs(rowButtons) do
+			local act = state.pad.map[code]
+			b.Text = titleOf[act or ""] or tostring(act)
+		end
+	end
+
+	for i, a in ipairs(ACTIONS) do
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, -8, 0, 34)
+		b.LayoutOrder = i
+		b.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+		b.Text = a[2]
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.SourceSans
+		b.TextSize = 16
+		b.AutoButtonColor = false
+		b.Selectable = false
+		b.Parent = pickList
+		Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+		b.Activated:Connect(function()
+			if currentCode then
+				if a[1] == "" then
+					state.pad.map[currentCode] = nil
+				else
+					state.pad.map[currentCode] = a[1]
+				end
+				saveState()
+				refreshRows()
+			end
+			pick.Visible = false
+		end)
+	end
+
+	-- صفوف الأزرار
+	for i, bt in ipairs(BUTTONS) do
+		local r = Instance.new("Frame")
+		r.Size = UDim2.new(1, -8, 0, 38)
+		r.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+		r.BackgroundTransparency = 0.3
+		r.LayoutOrder = i
+		r.Parent = padFrame
+		Instance.new("UICorner", r).CornerRadius = UDim.new(0, 6)
+
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(1, -170, 1, 0)
+		l.Position = UDim2.fromOffset(8, 0)
+		l.BackgroundTransparency = 1
+		l.Text = bt[2]
+		l.TextColor3 = Color3.new(1, 1, 1)
+		l.Font = Enum.Font.SourceSansBold
+		l.TextSize = 16
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.TextTruncate = Enum.TextTruncate.AtEnd
+		l.Parent = r
+
+		local ab = Instance.new("TextButton")
+		ab.Size = UDim2.fromOffset(150, 28)
+		ab.Position = UDim2.new(1, -158, 0.5, -14)
+		ab.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+		ab.TextColor3 = Color3.new(1, 1, 1)
+		ab.Font = Enum.Font.SourceSansBold
+		ab.TextSize = 14
+		ab.TextTruncate = Enum.TextTruncate.AtEnd
+		ab.AutoButtonColor = false
+		ab.Selectable = false
+		ab.Parent = r
+		Instance.new("UICorner", ab).CornerRadius = UDim.new(0, 6)
+		rowButtons[bt[1]] = ab
+		ab.Activated:Connect(function()
+			currentCode = bt[1]
+			pickTitle.Text = "اختر وظيفة: " .. bt[2]
+			pick.Visible = true
+		end)
+	end
+
+	-- إعادة الربط الافتراضي
+	local rr = Instance.new("TextButton")
+	rr.Size = UDim2.new(1, -8, 0, 38)
+	rr.LayoutOrder = 100
+	rr.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	rr.Text = "↺ إعادة الربط الافتراضي"
+	rr.TextColor3 = Color3.new(1, 1, 1)
+	rr.Font = Enum.Font.SourceSansBold
+	rr.TextSize = 16
+	rr.AutoButtonColor = false
+	rr.Selectable = false
+	rr.Parent = padFrame
+	Instance.new("UICorner", rr).CornerRadius = UDim.new(0, 6)
+	rr.Activated:Connect(function()
+		state.pad.map = {}
+		for k, v in pairs(CONFIG.PAD_MAP) do state.pad.map[k] = v end
+		saveState()
+		refreshRows()
+	end)
+
+	refreshRows()
 end
 
 -- سلايدر
@@ -2349,6 +2665,149 @@ end
 applyZ(panel, panel.ZIndex)
 applyZ(calUI, calUI.ZIndex)
 applyZ(calTarget, calTarget.ZIndex)
+
+-- ========== دعم يد التحكم (سوني / Xbox) ==========
+-- ملاحظة: حركة العصا اليسار والكاميرا (العصا اليمين) تتولاها روبلوكس نفسها.
+-- هنا نربط أزرار اليد بميزات السكربت (Aim / Shift Lock / كليك / زوم ...) حسب CONFIG.PAD_MAP
+do
+	local ContextActionService = game:GetService("ContextActionService")
+
+	function applyPadVisibility()
+		for _, e in pairs(active) do
+			e.obj.Visible = (not padHidden) or editMode
+		end
+	end
+
+	-- كليك بالماوس الوهمي (في مركز الشاشة لو المؤشر مقفول، وإلا في مركز الشاشة برضه لأن اليد ما فيها مؤشر)
+	local function padMouse(button, down)
+		local cam = Workspace.CurrentCamera
+		if not cam then return end
+		local c = effectiveLock and virtualCursor or (cam.ViewportSize / 2)
+		passFlash()
+		local p = mp(c)
+		VirtualInputManager:SendMouseMoveEvent(p.X, p.Y, game)
+		VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, button, down, game, 0)
+	end
+
+	local function holdScroll(forwards)
+		local token = 0
+		return {
+			down = function()
+				token += 1
+				local my = token
+				task.spawn(function()
+					while token == my do
+						local cam = Workspace.CurrentCamera
+						local c = cam and (cam.ViewportSize / 2) or virtualCursor
+						local p = mp(c)
+						VirtualInputManager:SendMouseWheelEvent(p.X, p.Y, forwards, game)
+						task.wait(0.1)
+					end
+				end)
+			end,
+			up = function() token += 1 end,
+		}
+	end
+
+	local padActions = {
+		shiftlock = { down = function() setShiftLock(not lockOn) end },
+		aimhold = { down = function() setAim(true) end, up = function() setAim(false) end },
+		aimtoggle = { down = function() setAim(not aimOn) end },
+		fire = { down = function() padMouse(0, true) end, up = function() padMouse(0, false) end },
+		rclick = { down = function() padMouse(1, true) end, up = function() padMouse(1, false) end },
+		mclick = { down = function() padMouse(2, true) end, up = function() padMouse(2, false) end },
+		settings = { down = function() panel.Visible = not panel.Visible end },
+		zoomin = holdScroll(true),
+		zoomout = holdScroll(false),
+		unstick = { down = function()
+			releaseAll()
+			if aimOn then setAim(false) end
+			rightHeld = false
+			pendingDelta = Vector2.zero
+			if not effectiveLock then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+			local cam = Workspace.CurrentCamera
+			local c = cam and (cam.ViewportSize / 2) or virtualCursor
+			local p = mp(c)
+			for b = 0, 2 do
+				VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, b, false, game, 0)
+			end
+		end },
+	}
+
+	local function resolve(act)
+		if padActions[act] then return padActions[act] end
+		local k = type(act) == "string" and act:match("^key:(%w+)$")
+		if k then
+			local ok, kc = pcall(function() return Enum.KeyCode[k] end)
+			if ok and kc then
+				local a = {
+					down = function() VirtualInputManager:SendKeyEvent(true, kc, false, game) end,
+					up = function() VirtualInputManager:SendKeyEvent(false, kc, false, game) end,
+				}
+				padActions[act] = a
+				return a
+			end
+		end
+		return nil
+	end
+
+	-- كل أزرار يد سوني/Xbox (الحالة تتحدد وقت الضغط من state.pad.map، فالتغيير من الإعدادات يشتغل فورًا)
+	local PAD_BUTTONS = {
+		"ButtonA", "ButtonB", "ButtonX", "ButtonY", "ButtonL1", "ButtonR1", "ButtonL2", "ButtonR2",
+		"ButtonL3", "ButtonR3", "ButtonSelect", "ButtonStart", "DPadUp", "DPadDown", "DPadLeft", "DPadRight",
+	}
+	local keys = {}
+	for _, name in ipairs(PAD_BUTTONS) do
+		local ok, kc = pcall(function() return Enum.KeyCode[name] end)
+		if ok and kc then table.insert(keys, kc) end
+	end
+
+	if #keys > 0 then
+		ContextActionService:BindActionAtPriority("MC_Pad", function(_, inputState, input)
+			if state.pad.Enabled then
+				local act = state.pad.map[input.KeyCode.Name]
+				if act and act ~= "" and not (act == "fire" and not state.pad.FireR2) then
+					local a = resolve(act)
+					if a then
+						if inputState == Enum.UserInputState.Begin then
+							pcall(a.down)
+						elseif a.up and (inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel) then
+							pcall(a.up)
+						end
+						-- الزر مربوط بوظيفة من السكربت: نمنع وظيفته الافتراضية في روبلوكس (عشان ما يتنفذ مرتين)
+						return Enum.ContextActionResult.Sink
+					end
+				end
+			end
+			-- غير مربوط: روبلوكس تكمل تعالج الزر طبيعي (حركة، قفز، أدوات ...)
+			return Enum.ContextActionResult.Pass
+		end, false, Enum.ContextActionPriority.High.Value, table.unpack(keys))
+	end
+
+	-- نخفي أزرار اللمس لما تستخدم اليد، ونرجعها أول ما تلمس الشاشة
+	UserInputService.LastInputTypeChanged:Connect(function(t)
+		if string.sub(t.Name, 1, 7) == "Gamepad" then
+			if state.pad.Enabled and state.pad.HideUI and not padHidden then
+				padHidden = true
+				applyPadVisibility()
+			end
+		elseif t == Enum.UserInputType.Touch then
+			if padHidden then
+				padHidden = false
+				applyPadVisibility()
+			end
+		end
+	end)
+
+	UserInputService.GamepadDisconnected:Connect(function()
+		if padHidden then
+			padHidden = false
+			applyPadVisibility()
+		end
+	end)
+end
 
 -- ========== تشغيل: إنشاء الأزرار المحفوظة ==========
 for _, spec in ipairs(catalog) do
