@@ -39,8 +39,9 @@ local CONFIG = {
 	CAMERA_METHOD = "script",  -- "script" = تدوير بالسكربت | "mouse" = حركة ماوس وهمية
 	CAM_RAD_PER_PX = 0.0035,
 	CAMERA_ONLY_RCLICK = true, -- الكاميرا تتحرك فقط من زر RClick
-	CAMERA_SPEED = 1.5,
-	STICK_SPEED = 14,        -- سرعة عصا الكاميرا (يد سوني الافتراضية) بالبكسل لكل إطار عند أقصى ميلان
+	CAMERA_SPEED = 0.8,       -- سرعة تحريك الكاميرا بالسحب (كانت 1.5 وكانت سريعة)
+	MAX_PITCH = 1.0,          -- أقصى زاوية رفع/خفض للكاميرا بالراديان (1.0 ≈ 57°) عشان ما تنقلب
+	STICK_SPEED = 8,         -- سرعة عصا الكاميرا (يد سوني الافتراضية) بالبكسل لكل إطار عند أقصى ميلان
 	STICK_DEADZONE = 0.15,   -- المنطقة الميتة للعصا
 	SAVE_FILE = "mobile_controls_layout.json",
 }
@@ -151,11 +152,12 @@ do
 	state.fov = math.clamp(tonumber(state.fov) or CONFIG.FOV, 30, 120)
 	state.sens = math.clamp(tonumber(state.sens) or CONFIG.SENSITIVITY, 0.1, 3)
 	-- ميزات الكاميرا الجديدة (افتراضيًا مطفّاة)
-	-- أول مرة يشتغل فيها هذا الإصدار: الخيارين ON افتراضيًا (بعدها يحفظ اختيارك)
-	if not state.camDefaultsApplied then
-		state.freeCam = true
+	-- أول مرة يشتغل فيها هذا الإصدار: الكاميرا ما تتحرك إلا لما تمسك RClick (الكاميرا الحرة OFF)
+	-- و"RClick بإصبعين" ON (بعدها يحفظ اختيارك)
+	if state.camDefaults ~= 2 then
+		state.freeCam = false
 		state.rclickTwo = true
-		state.camDefaultsApplied = true
+		state.camDefaults = 2
 	end
 	state.freeCam = state.freeCam == true     -- كاميرا بدون RClick
 	state.rclickTwo = state.rclickTwo == true -- RClick بإصبعين
@@ -629,13 +631,13 @@ RunService:BindToRenderStep("MobileCamOffset", Enum.RenderPriority.Last.Value, f
 		if accYaw == 0 and accPitch == 0 then return end
 		cf = rotAbout(cam.CFrame, f, Vector3.yAxis, accYaw)
 		local pitch = math.asin(math.clamp(cf.LookVector.Y, -1, 1))
-		accPitch = math.clamp(pitch + accPitch, -1.35, 1.35) - pitch
+		accPitch = math.clamp(pitch + accPitch, -CONFIG.MAX_PITCH, CONFIG.MAX_PITCH) - pitch
 		cf = rotAbout(cf, f, cf.RightVector, accPitch)
 	else
 		if dYaw == 0 and dPitch == 0 then return end
 		cf = rotAbout(cam.CFrame, f, Vector3.yAxis, dYaw)
 		local pitch = math.asin(math.clamp(cf.LookVector.Y, -1, 1))
-		dPitch = math.clamp(pitch + dPitch, -1.35, 1.35) - pitch
+		dPitch = math.clamp(pitch + dPitch, -CONFIG.MAX_PITCH, CONFIG.MAX_PITCH) - pitch
 		cf = rotAbout(cf, f, cf.RightVector, dPitch)
 	end
 	cam.CFrame = cf
