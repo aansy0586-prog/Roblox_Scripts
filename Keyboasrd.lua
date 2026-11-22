@@ -1,4 +1,3 @@
-
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
@@ -138,6 +137,31 @@ do
 		for k, v in pairs(CONFIG.PAD_MAP) do state.pad.map[k] = v end
 	end
 end
+
+-- ثيم الواجهة (ألوان + RGB متحرك) — يتعدل من ⚙ ← 🎨 مظهر
+local THEME = {
+	rgb = false,        -- RGB متحرك (قوس قزح يدور حول الأزرار)
+	speed = 0.25,       -- سرعة RGB
+	preset = "Blue",    -- اللون الثابت (أو "Custom" مع hue)
+	hue = 0.6,
+	glow = true,        -- إطار مضيء حول الأزرار
+	thick = 2,          -- سماكة الإطار
+	neonText = true,    -- توهج نيون للنص
+	opacity = 0.3,      -- شفافية خلفية الأزرار
+	radius = 8,         -- استدارة الزوايا
+}
+if type(state.theme) == "table" then
+	for k, v in pairs(THEME) do
+		if type(state.theme[k]) == type(v) then THEME[k] = state.theme[k] end
+	end
+end
+THEME.speed = math.clamp(THEME.speed, 0.02, 2)
+THEME.hue = math.clamp(THEME.hue, 0, 1)
+THEME.thick = math.clamp(THEME.thick, 0, 6)
+THEME.opacity = math.clamp(THEME.opacity, 0, 0.9)
+THEME.radius = math.clamp(THEME.radius, 0, 24)
+state.theme = THEME
+local themeRegister, themeRefresh
 
 local saveQueued = false
 local function saveState()
@@ -1639,6 +1663,7 @@ local function spawnElement(id)
 
 	active[id] = { obj = obj, scale = sc, stroke = stroke }
 	obj.Visible = (not padHidden) or editMode
+	if themeRegister then themeRegister(obj) end
 	state.enabled[id] = true
 end
 
@@ -1655,8 +1680,8 @@ end
 -- ========== واجهة الإعدادات (زر واحد يتحكم بكل شي) ==========
 local panel = Instance.new("Frame")
 panel.Name = "Settings"
-panel.Size = UDim2.new(0, 340, 1, -70)
-panel.Position = UDim2.new(0.5, -170, 0, 56)
+panel.Size = UDim2.new(0, 410, 1, -70)
+panel.Position = UDim2.new(0.5, -205, 0, 56)
 panel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 panel.BackgroundTransparency = 0.08
 panel.Active = true
@@ -1685,7 +1710,7 @@ local function styleTab(btn, selected)
 end
 
 local tabGeneral = Instance.new("TextButton")
-tabGeneral.Size = UDim2.new(1 / 4, -6, 0, 32)
+tabGeneral.Size = UDim2.new(1 / 5, -6, 0, 32)
 tabGeneral.Position = UDim2.new(0, 4, 0, 8)
 tabGeneral.Text = "عام"
 tabGeneral.Font = Enum.Font.SourceSansBold
@@ -1697,19 +1722,28 @@ tabGeneral.Parent = panel
 Instance.new("UICorner", tabGeneral).CornerRadius = UDim.new(0, 6)
 
 local tabButtons = tabGeneral:Clone()
-tabButtons.Position = UDim2.new(1 / 4, 4, 0, 8)
+tabButtons.Position = UDim2.new(1 / 5, 4, 0, 8)
 tabButtons.Text = "الأزرار"
 tabButtons.Parent = panel
 
 local tabShift = tabGeneral:Clone()
-tabShift.Position = UDim2.new(2 / 4, 4, 0, 8)
+tabShift.Position = UDim2.new(2 / 5, 4, 0, 8)
 tabShift.Text = "Shift Lock"
 tabShift.Parent = panel
 
 local tabPad = tabGeneral:Clone()
-tabPad.Position = UDim2.new(3 / 4, 4, 0, 8)
+tabPad.Position = UDim2.new(3 / 5, 4, 0, 8)
 tabPad.Text = "🎮 يد"
 tabPad.Parent = panel
+
+local tabTheme = tabGeneral:Clone()
+tabTheme.Position = UDim2.new(4 / 5, 4, 0, 8)
+tabTheme.Text = "🎨 مظهر"
+tabTheme.Parent = panel
+
+for _, t in ipairs({ tabGeneral, tabButtons, tabShift, tabPad, tabTheme }) do
+	t.TextSize = 12
+end
 
 local generalFrame = Instance.new("Frame")
 generalFrame.Size = UDim2.new(1, -16, 1, -52)
@@ -1750,22 +1784,36 @@ padFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 padFrame.Visible = false
 padFrame.Parent = panel
 
+local themeFrame = Instance.new("ScrollingFrame")
+themeFrame.Size = UDim2.new(1, -16, 1, -52)
+themeFrame.Position = UDim2.new(0, 8, 0, 48)
+themeFrame.BackgroundTransparency = 1
+themeFrame.BorderSizePixel = 0
+themeFrame.ScrollBarThickness = 4
+themeFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+themeFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+themeFrame.Visible = false
+themeFrame.Parent = panel
+
 local function showTab(name)
 	generalFrame.Visible = (name == "general")
 	buttonsFrame.Visible = (name == "buttons")
 	shiftFrame.Visible = (name == "shift")
 	padFrame.Visible = (name == "pad")
+	themeFrame.Visible = (name == "theme")
 	local pk = panel:FindFirstChild("PadPicker")
 	if pk then pk.Visible = false end
 	styleTab(tabGeneral, name == "general")
 	styleTab(tabButtons, name == "buttons")
 	styleTab(tabShift, name == "shift")
 	styleTab(tabPad, name == "pad")
+	styleTab(tabTheme, name == "theme")
 end
 tabGeneral.Activated:Connect(function() showTab("general") end)
 tabButtons.Activated:Connect(function() showTab("buttons") end)
 tabShift.Activated:Connect(function() showTab("shift") end)
 tabPad.Activated:Connect(function() showTab("pad") end)
+tabTheme.Activated:Connect(function() showTab("theme") end)
 showTab("general")
 
 -- صفوف إعدادات Shift Lock
@@ -2863,6 +2911,262 @@ do
 			applyPadVisibility()
 		end
 	end)
+end
+
+-- ========== ثيم أسطوري: ألوان + RGB متحرك ==========
+do
+	local PRESETS = {
+		{ "Blue", Color3.fromRGB(0, 170, 255) },
+		{ "Cyan", Color3.fromRGB(0, 255, 230) },
+		{ "Green", Color3.fromRGB(60, 255, 120) },
+		{ "Gold", Color3.fromRGB(255, 200, 40) },
+		{ "Orange", Color3.fromRGB(255, 130, 30) },
+		{ "Red", Color3.fromRGB(255, 50, 70) },
+		{ "Pink", Color3.fromRGB(255, 80, 200) },
+		{ "Purple", Color3.fromRGB(160, 70, 255) },
+		{ "White", Color3.fromRGB(240, 240, 255) },
+	}
+
+	local function baseAccent()
+		if THEME.preset == "Custom" then return Color3.fromHSV(THEME.hue, 1, 1) end
+		for _, pr in ipairs(PRESETS) do
+			if pr[1] == THEME.preset then return pr[2] end
+		end
+		return PRESETS[1][2]
+	end
+
+	local RAINBOW = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 1, 1)),
+		ColorSequenceKeypoint.new(1 / 6, Color3.fromHSV(1 / 6, 1, 1)),
+		ColorSequenceKeypoint.new(2 / 6, Color3.fromHSV(2 / 6, 1, 1)),
+		ColorSequenceKeypoint.new(3 / 6, Color3.fromHSV(3 / 6, 1, 1)),
+		ColorSequenceKeypoint.new(4 / 6, Color3.fromHSV(4 / 6, 1, 1)),
+		ColorSequenceKeypoint.new(5 / 6, Color3.fromHSV(5 / 6, 1, 1)),
+		ColorSequenceKeypoint.new(1, Color3.fromHSV(0, 1, 1)),
+	})
+
+	local themed = {}
+
+	local function styleObj(obj, t)
+		t.stroke.Thickness = THEME.thick
+		t.stroke.Enabled = THEME.glow and THEME.thick > 0 and not editMode
+		t.grad.Color = THEME.rgb and RAINBOW or ColorSequence.new(baseAccent())
+		if t.corner then t.corner.CornerRadius = UDim.new(0, THEME.radius) end
+		if t.isButton then
+			obj.BackgroundTransparency = THEME.opacity
+			obj.TextStrokeTransparency = THEME.neonText and 0.45 or 1
+			obj.TextStrokeColor3 = baseAccent()
+		end
+	end
+
+	function themeRegister(obj)
+		if themed[obj] then return end
+		local stroke = Instance.new("UIStroke")
+		stroke.Name = "ThemeStroke"
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.Color = Color3.new(1, 1, 1) -- الألوان من UIGradient
+		stroke.Parent = obj
+		local grad = Instance.new("UIGradient")
+		grad.Parent = stroke
+		local t = { stroke = stroke, grad = grad }
+		if obj:IsA("TextButton") and obj ~= tabGeneral and obj ~= tabButtons and obj ~= tabShift
+			and obj ~= tabPad and obj ~= tabTheme then
+			t.isButton = true
+			if not obj:FindFirstChildOfClass("UICorner") then
+				local c = Instance.new("UICorner")
+				c.Name = "ThemeCorner"
+				c.Parent = obj
+				t.corner = c
+			end
+		end
+		themed[obj] = t
+		styleObj(obj, t)
+	end
+
+	function themeRefresh()
+		for obj, t in pairs(themed) do
+			if obj.Parent then styleObj(obj, t) else themed[obj] = nil end
+		end
+	end
+
+	-- الحركة (30 مرة بالثانية)
+	local acc = 0
+	RunService.RenderStepped:Connect(function(dt)
+		acc += dt
+		if acc < 1 / 30 then return end
+		acc = 0
+		local now = os.clock()
+		local rot = (now * THEME.speed * 360) % 360
+		local neon = THEME.rgb and Color3.fromHSV((now * THEME.speed) % 1, 1, 1) or baseAccent()
+		local pulse = THEME.rgb and (0.5 * math.sin(now * 3)) or 0
+		for obj, t in pairs(themed) do
+			if not obj.Parent then
+				themed[obj] = nil
+			else
+				t.stroke.Enabled = THEME.glow and THEME.thick > 0 and not editMode
+				if THEME.rgb then
+					t.grad.Rotation = rot
+					t.stroke.Thickness = math.max(0, THEME.thick + pulse)
+				end
+				if t.isButton and THEME.neonText then obj.TextStrokeColor3 = neon end
+			end
+		end
+	end)
+
+	-- نسجّل واجهة السكربت الثابتة
+	themeRegister(gear)
+	themeRegister(doneBtn)
+	themeRegister(panel)
+
+	-- واجهة تبويب 🎨 مظهر
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = themeFrame
+
+	local order = 0
+	local function row(labelText, rightW)
+		order += 1
+		local r = Instance.new("Frame")
+		r.Size = UDim2.new(1, -8, 0, 38)
+		r.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+		r.BackgroundTransparency = 0.3
+		r.LayoutOrder = order
+		r.Parent = themeFrame
+		Instance.new("UICorner", r).CornerRadius = UDim.new(0, 6)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(1, -(rightW + 20), 1, 0)
+		l.Position = UDim2.fromOffset(8, 0)
+		l.BackgroundTransparency = 1
+		l.Text = labelText
+		l.TextColor3 = Color3.new(1, 1, 1)
+		l.Font = Enum.Font.SourceSans
+		l.TextSize = 16
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.TextTruncate = Enum.TextTruncate.AtEnd
+		l.Parent = r
+		return r
+	end
+
+	local function smallButton(parent, text, x, w)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.fromOffset(w, 28)
+		b.Position = UDim2.new(1, x, 0.5, -14)
+		b.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+		b.Text = text
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.SourceSansBold
+		b.TextSize = 18
+		b.AutoButtonColor = false
+		b.Selectable = false
+		b.Parent = parent
+		Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+		return b
+	end
+
+	local function changed()
+		saveState()
+		themeRefresh()
+	end
+
+	local function toggle(labelText, key)
+		local b = smallButton(row(labelText, 90), "", -98, 90)
+		local function refresh()
+			b.Text = THEME[key] and "ON" or "OFF"
+			b.BackgroundColor3 = THEME[key] and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(170, 50, 50)
+		end
+		refresh()
+		b.Activated:Connect(function()
+			THEME[key] = not THEME[key]
+			refresh()
+			changed()
+		end)
+	end
+
+	local function stepper(labelText, key, minV, maxV, step, onChange)
+		local r = row(labelText, 130)
+		local minus = smallButton(r, "-", -124, 28)
+		local plus = smallButton(r, "+", -36, 28)
+		local val = Instance.new("TextLabel")
+		val.Size = UDim2.fromOffset(52, 28)
+		val.Position = UDim2.new(1, -94, 0.5, -14)
+		val.BackgroundTransparency = 1
+		val.TextColor3 = Color3.new(1, 1, 1)
+		val.Font = Enum.Font.SourceSansBold
+		val.TextSize = 16
+		val.Parent = r
+		local function refresh() val.Text = tostring(THEME[key]) end
+		refresh()
+		local function change(d)
+			THEME[key] = math.floor(math.clamp(THEME[key] + d, minV, maxV) * 100 + 0.5) / 100
+			refresh()
+			if onChange then onChange() end
+			changed()
+		end
+		minus.Activated:Connect(function() change(-step) end)
+		plus.Activated:Connect(function() change(step) end)
+	end
+
+	toggle("RGB animated (rainbow)", "rgb")
+	stepper("RGB speed", "speed", 0.05, 2, 0.05)
+
+	local themePaint
+
+	-- ألوان جاهزة
+	do
+		local r = row("Color", 0)
+		r.Size = UDim2.new(1, -8, 0, 70)
+		local holder = Instance.new("Frame")
+		holder.Size = UDim2.new(1, -16, 0, 30)
+		holder.Position = UDim2.fromOffset(8, 32)
+		holder.BackgroundTransparency = 1
+		holder.Parent = r
+		local hl = Instance.new("UIListLayout")
+		hl.FillDirection = Enum.FillDirection.Horizontal
+		hl.Padding = UDim.new(0, 6)
+		hl.Parent = holder
+		local swatches = {}
+		local function paint()
+			for name, sw in pairs(swatches) do
+				local on = (THEME.preset == name)
+				sw.stroke.Thickness = on and 3 or 0
+			end
+		end
+		for _, pr in ipairs(PRESETS) do
+			local sw = Instance.new("TextButton")
+			sw.Size = UDim2.fromOffset(30, 30)
+			sw.BackgroundColor3 = pr[2]
+			sw.Text = ""
+			sw.AutoButtonColor = false
+			sw.Selectable = false
+			sw.Parent = holder
+			Instance.new("UICorner", sw).CornerRadius = UDim.new(0, 8)
+			local st = Instance.new("UIStroke")
+			st.Color = Color3.new(1, 1, 1)
+			st.Thickness = 0
+			st.Parent = sw
+			swatches[pr[1]] = { stroke = st }
+			sw.Activated:Connect(function()
+				THEME.preset = pr[1]
+				paint()
+				changed()
+			end)
+		end
+		paint()
+		themePaint = paint
+	end
+
+	stepper("Custom hue (0-1)", "hue", 0, 1, 0.05, function()
+		THEME.preset = "Custom"
+		if themePaint then themePaint() end
+	end)
+	toggle("Glow border", "glow")
+	stepper("Border thickness", "thick", 0, 6, 0.5)
+	toggle("Neon text", "neonText")
+	stepper("Button opacity (transparency)", "opacity", 0, 0.9, 0.05)
+	stepper("Corner radius", "radius", 0, 24, 2)
+
+	applyZ(themeFrame, themeFrame.ZIndex)
 end
 
 -- ========== تشغيل: إنشاء الأزرار المحفوظة ==========
