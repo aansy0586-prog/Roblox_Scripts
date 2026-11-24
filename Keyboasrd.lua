@@ -141,6 +141,7 @@ end
 -- ثيم الواجهة (ألوان + RGB متحرك) — يتعدل من ⚙ ← 🎨 مظهر
 local THEME = {
 	rgb = false,        -- RGB متحرك (قوس قزح يدور حول الأزرار)
+	style = "rainbow",  -- نمط RGB: rainbow | wave | multi | sync
 	speed = 0.25,       -- سرعة RGB
 	preset = "Blue",    -- اللون الثابت (أو "Custom" مع hue)
 	hue = 0.6,
@@ -184,6 +185,11 @@ local lockOn = false             -- Shift Lock شغال
 local aimOn = false              -- وضع التصويب (Aim) شغال
 
 -- حساسية دوران الكاميرا (سلايدر Sensitivity) × مضاعف Aim
+-- هل الكاميرا تحتاج RClick مضغوط؟ (الافتراضي نعم)
+local function camNeedsRClick()
+	return not (state.sl and state.sl.CamNeedsRClick == false)
+end
+
 local function camSens()
 	return state.sens * (aimOn and CONFIG.AIM_SENS_MULT or 1)
 end
@@ -425,7 +431,7 @@ touchLayer.InputBegan:Connect(function(input)
 				pendingDelta += delta * CONFIG.CAMERA_SPEED * camSens()
 			elseif effectiveLock then
 				-- المؤشر مقفول: الكاميرا ما تتحرك إلا من RClick
-				if lockOn or aimOn or not CONFIG.CAMERA_ONLY_RCLICK then
+				if (lockOn or aimOn or not CONFIG.CAMERA_ONLY_RCLICK) and not camNeedsRClick() then
 					pendingDelta += delta * CONFIG.CAMERA_SPEED * camSens()
 				end
 			else
@@ -633,6 +639,7 @@ local SL = {
 	VibrationTime = 0.25,
 	Offset = 1.75,            -- إزاحة الكاميرا للكتف (سالب = الكتف الأيسر)
 	AimOffset = 0.85,         -- إزاحة الكاميرا أثناء Aim
+	CamNeedsRClick = true,    -- الكاميرا ما تتحرك إلا لما تمسك RClick بإصبع وتسحب بإصبع ثاني
 	AimZoom = CONFIG.AIM_FOV_MULT, -- زوم FOV أثناء Aim (1 = بدون زوم)
 }
 if type(state.sl) == "table" then
@@ -1904,6 +1911,7 @@ do
 
 	toggle("Smooth camera", "Smooth")
 	toggle("See through walls", "SeeThrough")
+	toggle("Camera needs RClick held", "CamNeedsRClick")
 	toggle("Vibrate when ON", "Vibrate")
 	stepper("Vibration strength", "VibrationStrength", 0.1, 1, 0.1)
 	stepper("Vibration time (s)", "VibrationTime", 0.05, 1, 0.05)
@@ -2947,9 +2955,19 @@ do
 
 	local themed = {}
 
+	-- تسلسل ألوان متنوع (3 ألوان متباعدة) انطلاقًا من hue
+	local function hueSeq(h)
+		return ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromHSV(h % 1, 1, 1)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromHSV((h + 0.17) % 1, 1, 1)),
+			ColorSequenceKeypoint.new(1, Color3.fromHSV((h + 0.34) % 1, 1, 1)),
+		})
+	end
+
 	local function styleObj(obj, t)
 		t.stroke.Thickness = THEME.thick
 		t.stroke.Enabled = THEME.glow and THEME.thick > 0 and not editMode
+		t.mode = nil
 		t.grad.Color = THEME.rgb and RAINBOW or ColorSequence.new(baseAccent())
 		if t.corner then t.corner.CornerRadius = UDim.new(0, THEME.radius) end
 		if t.isButton then
@@ -2968,7 +2986,7 @@ do
 		stroke.Parent = obj
 		local grad = Instance.new("UIGradient")
 		grad.Parent = stroke
-		local t = { stroke = stroke, grad = grad }
+		local t = { stroke = stroke, grad = grad, offset = math.random() }
 		if obj:IsA("TextButton") and obj ~= tabGeneral and obj ~= tabButtons and obj ~= tabShift
 			and obj ~= tabPad and obj ~= tabTheme then
 			t.isButton = true
@@ -3004,11 +3022,33 @@ do
 				themed[obj] = nil
 			else
 				t.stroke.Enabled = THEME.glow and THEME.thick > 0 and not editMode
+				local h = nil
 				if THEME.rgb then
+					local style = THEME.style
+					if style == "wave" then
+						-- موجة ألوان تتحرك عبر الشاشة (كل زر حسب مكانه)
+						local cam = Workspace.CurrentCamera
+						local vpw = cam and cam.ViewportSize.X or 1000
+						h = (obj.AbsolutePosition.X / vpw * 1.5 + now * THEME.speed) % 1
+					elseif style == "multi" then
+						-- كل زر له لون مختلف عن جاره
+						h = (t.offset + now * THEME.speed) % 1
+					elseif style == "sync" then
+						h = (now * THEME.speed) % 1
+					end
+					if h then
+						t.mode = style
+						t.grad.Color = hueSeq(h)
+					elseif t.mode ~= "rainbow" then
+						t.mode = "rainbow"
+						t.grad.Color = RAINBOW
+					end
 					t.grad.Rotation = rot
 					t.stroke.Thickness = math.max(0, THEME.thick + pulse)
 				end
-				if t.isButton and THEME.neonText then obj.TextStrokeColor3 = neon end
+				if t.isButton and THEME.neonText then
+					obj.TextStrokeColor3 = h and Color3.fromHSV(h, 1, 1) or neon
+				end
 			end
 		end
 	end)
@@ -3109,6 +3149,27 @@ do
 
 	toggle("RGB animated (rainbow)", "rgb")
 	stepper("RGB speed", "speed", 0.05, 2, 0.05)
+
+	-- نمط RGB (يتبدل بكل ضغطة)
+	do
+		local styles = { "rainbow", "wave", "multi", "sync" }
+		local names = {
+			rainbow = "Rainbow spin",
+			wave = "Color wave",
+			multi = "Each button different",
+			sync = "All in sync",
+		}
+		local r = row("RGB style", 170)
+		local b = smallButton(r, "", -178, 170)
+		local function refresh() b.Text = names[THEME.style] or tostring(THEME.style) end
+		refresh()
+		b.Activated:Connect(function()
+			local idx = table.find(styles, THEME.style) or 0
+			THEME.style = styles[(idx % #styles) + 1]
+			refresh()
+			changed()
+		end)
+	end
 
 	local themePaint
 
