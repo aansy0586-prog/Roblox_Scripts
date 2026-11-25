@@ -41,6 +41,10 @@ local CONFIG = {
 	CAMERA_ONLY_RCLICK = true, -- الكاميرا تتحرك فقط من زر RClick
 	CAMERA_SPEED = 1.5,
 	SAVE_FILE = "mobile_controls_layout.json",
+	SINGLE_TOUCH = true,  -- التراك باد يقبل إصبع واحد بس (الإصبع الثاني يتجاهل)
+	-- حدود منطقة التراك باد كنسبة من الشاشة {يسار, فوق, يمين, تحت}
+	-- مثال: {0.3, 0, 1, 1} يعني يبدأ من 30% من اليسار فقط. nil = الشاشة كلها
+	TOUCH_ZONE = nil,
 }
 
 -- ========== GUI ==========
@@ -399,19 +403,76 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+-- مناطق ممنوعة: المؤشر الوهمي ما يدخل فوق أزرار السكربت (وضع التراك باد)
+local function blockedAt(p)
+	local o = probe.AbsolutePosition
+	local x, y = p.X - o.X, p.Y - o.Y
+	for _, e in pairs(active) do
+		local obj = e.obj
+		if obj.Visible and obj.Parent then
+			local pos = obj.AbsolutePosition - o
+			local sz = obj.AbsoluteSize
+			if x >= pos.X and x <= pos.X + sz.X and y >= pos.Y and y <= pos.Y + sz.Y then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- لو المؤشر صار داخل زر (مثلًا بعد نقل زر عليه) نرجعه لمكان فاضي
+RunService.Heartbeat:Connect(function()
+	if touchMode == "pad" and not effectiveLock and not editMode and blockedAt(virtualCursor) then
+		local cam = Workspace.CurrentCamera
+		if cam then
+			local vp = cam.ViewportSize
+			local c = vp / 2
+			for _, f in ipairs({ 0.5, 0.35, 0.65 }) do
+				local try = Vector2.new(vp.X * f, vp.Y * 0.5)
+				if not blockedAt(try) then
+					c = try
+					break
+				end
+			end
+			virtualCursor = c
+			sendMove(c)
+		end
+	end
+end)
+
 touchLayer.InputBegan:Connect(function(input)
 	if editMode or not isPress(input) then return end
-	-- لمسة قديمة عالقة؟ نفكها ونبدأ الجديدة
-	if held[touchLayer] then releaseBtn(touchLayer) end
 
 	local inset = GuiService:GetGuiInset()
-	local startT = os.clock()
 	local startPos = Vector2.new(input.Position.X, input.Position.Y)
+	local startV = startPos + inset
+
+	-- إصبع واحد فقط في وضع التراك باد: نتجاهل الإصبع الثاني تمامًا
+	if held[touchLayer] then
+		if CONFIG.SINGLE_TOUCH then return end
+		releaseBtn(touchLayer)
+	end
+
+	-- ما نبدأ لمسة لو الإصبع واقع فوق أي زر أو الجويستك أو الـ DPad
+	if blockedAt(startV) then return end
+
+	-- حدود المنطقة المسموحة للتراك باد (اختياري)
+	local z = CONFIG.TOUCH_ZONE
+	if z then
+		local cam = Workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+		if startV.X < vp.X * z[1] or startV.Y < vp.Y * z[2]
+			or startV.X > vp.X * z[3] or startV.Y > vp.Y * z[4] then
+			return
+		end
+	end
+
+	local startT = os.clock()
 	local lastPos = startPos
 	local moved = 0
 	local isDown = false
 	local cancelled = false
-	local lastVirtual = startPos + inset
+	local lastVirtual = startV
 	-- أثناء تحريك الكاميرا (RClick أو منظور أول) نستخدم حركة نسبية دائمًا
 	local mode = (rightHeld or effectiveLock) and "pad" or touchMode
 
@@ -436,10 +497,16 @@ touchLayer.InputBegan:Connect(function(input)
 				end
 			else
 				local vp = Workspace.CurrentCamera.ViewportSize
-				virtualCursor = Vector2.new(
-					math.clamp(virtualCursor.X + delta.X * CONFIG.PAD_SPEED, 0, vp.X),
-					math.clamp(virtualCursor.Y + delta.Y * CONFIG.PAD_SPEED, 0, vp.Y)
-				)
+				local nx = math.clamp(virtualCursor.X + delta.X * CONFIG.PAD_SPEED, 0, vp.X)
+				local ny = math.clamp(virtualCursor.Y + delta.Y * CONFIG.PAD_SPEED, 0, vp.Y)
+				-- لو الإصبع اتحرك لمنطقة زر نوقف المؤشر مع محاولة الانزلاق
+				if not blockedAt(Vector2.new(nx, ny)) then
+					virtualCursor = Vector2.new(nx, ny)
+				elseif not blockedAt(Vector2.new(nx, virtualCursor.Y)) then
+					virtualCursor = Vector2.new(nx, virtualCursor.Y)
+				elseif not blockedAt(Vector2.new(virtualCursor.X, ny)) then
+					virtualCursor = Vector2.new(virtualCursor.X, ny)
+				end
 				sendMoveThrottled(virtualCursor)
 			end
 		end
@@ -471,8 +538,9 @@ touchLayer.InputBegan:Connect(function(input)
 
 	if mode == "tap" then
 		-- ننقل المؤشر أولًا وننتظر إطار عشان الكليك ما يطلع في المكان القديم
-		virtualCursor = lastVirtual
-		sendMove(lastVirtual)
+		virtualCursor = startV
+		lastVirtual = startV
+		sendMove(startV)
 		task.spawn(function()
 			RunService.Heartbeat:Wait()
 			if cancelled then
