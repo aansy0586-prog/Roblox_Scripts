@@ -440,6 +440,51 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
+-- إصبع ثاني على التراك باد يحرك الكاميرا (RClick وهمي)
+local camTouchInput = nil
+local camTouchLastPos = nil
+
+local function startCamTouch(input)
+	camTouchInput = input
+	camTouchLastPos = Vector2.new(input.Position.X, input.Position.Y)
+	-- نضغط RClick وهمي عشان الألعاب تعرف إن الكاميرا شغالة
+	rightHeld = true
+	pendingDelta = Vector2.zero
+	passFlash()
+	local q = mp(virtualCursor)
+	VirtualInputManager:SendMouseMoveEvent(q.X, q.Y, game)
+	VirtualInputManager:SendMouseButtonEvent(q.X, q.Y, 1, true, game, 0)
+	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+end
+
+local function stopCamTouch()
+	if not camTouchInput then return end
+	camTouchInput = nil
+	camTouchLastPos = nil
+	rightHeld = false
+	passFlash()
+	local q = mp(virtualCursor)
+	VirtualInputManager:SendMouseButtonEvent(q.X, q.Y, 1, false, game, 0)
+	VirtualInputManager:SendMouseMoveEvent(q.X, q.Y, game)
+	if not effectiveLock then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	end
+end
+
+UserInputService.InputChanged:Connect(function(input)
+	if camTouchInput and input == camTouchInput and camTouchLastPos then
+		local pos = Vector2.new(input.Position.X, input.Position.Y)
+		pendingDelta += (pos - camTouchLastPos) * CONFIG.CAMERA_SPEED * camSens()
+		camTouchLastPos = pos
+	end
+end)
+
+UserInputService.TouchEnded:Connect(function(input)
+	if camTouchInput and input == camTouchInput then
+		stopCamTouch()
+	end
+end)
+
 touchLayer.InputBegan:Connect(function(input)
 	if editMode or not isPress(input) then return end
 
@@ -447,14 +492,17 @@ touchLayer.InputBegan:Connect(function(input)
 	local startPos = Vector2.new(input.Position.X, input.Position.Y)
 	local startV = startPos + inset
 
-	-- إصبع واحد فقط في وضع التراك باد: نتجاهل الإصبع الثاني تمامًا
-	if held[touchLayer] then
-		if CONFIG.SINGLE_TOUCH then return end
-		releaseBtn(touchLayer)
-	end
-
 	-- ما نبدأ لمسة لو الإصبع واقع فوق أي زر أو الجويستك أو الـ DPad
 	if blockedAt(startV) then return end
+
+	-- إصبع ثاني على التراك باد = يحرك الكاميرا (RClick وهمي)
+	if held[touchLayer] and not camTouchInput then
+		startCamTouch(input)
+		return
+	end
+
+	-- إصبع ثالث أو أكثر: نتجاهله
+	if held[touchLayer] or camTouchInput then return end
 
 	-- حدود المنطقة المسموحة للتراك باد (اختياري)
 	local z = CONFIG.TOUCH_ZONE
@@ -559,6 +607,8 @@ touchLayer.InputEnded:Connect(function(input)
 	local h = held[touchLayer]
 	if h and h.input == input then
 		releaseBtn(touchLayer)
+		-- بعد رفع الإصبع مباشرة، أي إصبع جديد على الشاشة يقدر يتحكم بالتراك باد
+		held[touchLayer] = nil
 	end
 end)
 
@@ -1488,6 +1538,41 @@ local function buildPCMode(size)
 	return b
 end
 
+-- زر التحقق من وضع PC (يطبع النتائج في F9)
+local function buildPCCheck(size)
+	local b = newButton("PC Check", size)
+	b.TextSize = 14
+	b.Activated:Connect(function()
+		if editMode then return end
+		local uis = UserInputService
+		print("=== PC CHECK ===")
+		print("TouchEnabled    :", uis.TouchEnabled)
+		print("KeyboardEnabled :", uis.KeyboardEnabled)
+		print("MouseEnabled    :", uis.MouseEnabled)
+		print("GamepadEnabled  :", uis.GamepadEnabled)
+		local ok1, platform = pcall(function() return uis:GetPlatform() end)
+		print("Platform        :", ok1 and tostring(platform) or "خطأ - ما يدعم")
+		local ok2, last = pcall(function() return uis:GetLastInputType() end)
+		print("LastInputType   :", ok2 and tostring(last) or "خطأ - ما يدعم")
+		local ok3, loc = pcall(function() return uis:GetMouseLocation() end)
+		print("MouseLocation   :", ok3 and tostring(loc) or "خطأ")
+		print("spoofOn         :", spoofOn)
+		print("spoofInstalled  :", spoofInstalled)
+		print("================")
+		-- نلوّن الزر حسب النتيجة: أخضر = تمويه شغّال، أحمر = ما اشتغل
+		local success = not uis.TouchEnabled and uis.KeyboardEnabled and uis.MouseEnabled
+		b.BackgroundColor3 = success and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(180, 50, 50)
+		b.Text = success and "✓ PC شغّال" or "✗ PC ما اشتغل"
+		task.delay(3, function()
+			if b.Parent then
+				b.Text = "PC Check"
+				b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+			end
+		end)
+	end)
+	return b
+end
+
 -- شريط الأرقام 1-0 (لمسة على الرقم = ضغط المفتاح؛ مفيد لاختيار الأدوات/الأسلحة)
 local function buildNumBar(size)
 	local names = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Zero" }
@@ -1609,6 +1694,8 @@ addSpec({ id = "Aim", title = "Aim (تصويب: مؤشر بالنص + ADS)", lab
 	build = function(s) return buildAim(s.size) end })
 addSpec({ id = "PCMode", title = "وضع PC (تجريبي): تمويه نوع الجهاز", label = "PC", group = GROUP_TOOLS, size = Vector2.new(70, 44),
 	build = function(s) return buildPCMode(s.size) end })
+addSpec({ id = "PCCheck", title = "PC Check (تحقق من التمويه → F9)", label = "PC Check", group = GROUP_TOOLS, size = Vector2.new(90, 44),
+	build = function(s) return buildPCCheck(s.size) end })
 addSpec({ id = "ShiftLock", title = "زر الهدف (Shift Lock)", label = "ShiftLock", group = GROUP_TOOLS, size = Vector2.new(70, 70),
 	build = function(s) return buildShiftLock(s.size) end })
 addSpec({ id = "MouseLock", title = "قفل / فتح الماوس", label = "MouseLock", group = GROUP_TOOLS, size = Vector2.new(120, 40),
